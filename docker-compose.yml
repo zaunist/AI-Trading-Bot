@@ -1,0 +1,49 @@
+version: "3.8"
+
+services:
+  trading-bot:
+    build: .
+    container_name: deepseek-trading-bot
+    restart: unless-stopped
+    environment:
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
+      - BINANCE_API_KEY=${BINANCE_API_KEY}
+      - BINANCE_SECRET=${BINANCE_SECRET}
+      - OKX_API_KEY=${OKX_API_KEY}
+      - OKX_SECRET=${OKX_SECRET}
+      - OKX_PASSWORD=${OKX_PASSWORD}
+    volumes:
+      - ./logs:/app/logs
+      - ./data:/app/data
+    networks:
+      - trading-network
+    # 如果需要外部访问，可以取消注释以下行
+    # ports:
+    #   - "8000:8000"
+    # 健康检查
+    healthcheck:
+      test:
+        ["CMD", "python", "-c", "import ccxt, openai; print('Dependencies OK')"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # 可选：添加一个监控服务
+  # monitoring:
+  #   image: prom/prometheus:latest
+  #   container_name: trading-monitor
+  #   ports:
+  #     - "9090:9090"
+  #   volumes:
+  #     - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+  #   networks:
+  #     - trading-network
+
+networks:
+  trading-network:
+    driver: bridge
+
+volumes:
+  logs:
+  data:

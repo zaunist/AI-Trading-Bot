@@ -26,7 +26,7 @@ exchange = ccxt.binance({
 TRADE_CONFIG = {
     'symbol': 'BTC/USDT',
     'amount': 0.001,  # 交易数量 (BTC)
-    'leverage': 10,  # 杠杆倍数
+    'leverage': 5,  # 杠杆倍数
     'timeframe': '15m',  # 使用1小时K线，可改为15m
     'test_mode': False,  # 测试模式
 }
