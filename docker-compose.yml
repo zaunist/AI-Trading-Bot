@@ -2,7 +2,7 @@ version: "3.8"
 
 services:
   trading-bot:
-    build: .
+    image: zaunist/ds:latest
     container_name: deepseek-trading-bot
     restart: unless-stopped
     environment:
