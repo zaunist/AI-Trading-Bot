@@ -25,11 +25,6 @@ RUN pip install --upgrade pip && \
 # 复制项目文件
 COPY deepseek.py .
 
-# 创建非 root 用户
-RUN useradd --create-home --shell /bin/bash app && \
-    chown -R app:app /app
-USER app
-
 # 暴露端口（如果需要健康检查或其他服务）
 EXPOSE 8000
 
