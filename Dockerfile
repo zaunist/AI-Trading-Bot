@@ -24,7 +24,6 @@ RUN pip install --upgrade pip && \
 
 # 复制项目文件
 COPY deepseek.py .
-COPY deepseek_ok版本.py .
 
 # 创建非 root 用户
 RUN useradd --create-home --shell /bin/bash app && \
