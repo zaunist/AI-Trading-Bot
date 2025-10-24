@@ -23,14 +23,13 @@ RUN pip install --upgrade pip && \
     pip install -r requirements.txt
 
 # 复制项目文件
-COPY deepseek.py .
+COPY futures_trading.py .
+COPY spot_trading.py .
+COPY main.py .
+COPY .env.example .
 
-# 暴露端口（如果需要健康检查或其他服务）
-EXPOSE 8000
-
-# 健康检查
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD python -c "import requests; requests.get('http://localhost:8000/health')" || exit 1
+# 创建数据目录
+RUN mkdir -p /app/data
 
 # 启动命令
-CMD ["python", "deepseek.py"]
+CMD ["python", "main.py"]
