@@ -20,28 +20,60 @@ deepseek_client = OpenAI(
 )
 
 exchange = ccxt.binance({
-    'options': {'defaultType': 'future'},
+    'options': {
+        'defaultType': 'future'},
     'apiKey': os.getenv('BINANCE_API_KEY'),
     'secret': os.getenv('BINANCE_SECRET'),
 })
 
-# 交易参数配置 - 结合两个版本的优点
-TRADE_CONFIG = {
-    'symbol': 'BTC/USDT',  # 币安的合约符号格式
-    'amount': 0.001,  # 交易数量 (BTC)
-    'leverage': 10,  # 杠杆倍数
+# 交易参数配置 - 支持多个交易对
+GLOBAL_CONFIG = {
     'timeframe': "5m",  # 使用5分钟K线
     'test_mode': os.getenv('TEST_MODE'),  # 测试模式
     'data_points': 288,  # 24小时数据（288根5分钟K线）
     'analysis_periods': {
-        'short_term': 60,  # 短期均线
-        'medium_term': 150,  # 中期均线
-        'long_term': 288  # 长期趋势
+        'short_term': 12,   # 1小时短期均线 (12 * 5分钟)
+        'medium_term': 60,   # 5小时中期均线 (60 * 5分钟)
+        'long_term': 288,    # 24小时长期趋势 (288 * 5分钟)
+        'very_long_term': 1440  # 5天超长期趋势 (1440 * 5分钟)
+    },
+    'multi_timeframe_analysis': {
+        'primary': '5m',      # 主要分析周期
+        'secondary': '15m',    # 次要分析周期
+        'tertiary': '1h',      # 三级分析周期
+        'long_term': '4h'      # 长期分析周期
     }
 }
 
-signal_history = []
+# 各交易对的独立配置
+TRADE_CONFIGS = {
+    'BTC/USDT': {
+        'symbol': 'BTC/USDT',  # 币安的合约符号格式
+        'base_currency': 'BTC',  # 基础货币
+        'enabled': True  # 是否启用此交易对
+    },
+    'ETH/USDT': {
+        'symbol': 'ETH/USDT',  # 币安的合约符号格式
+        'base_currency': 'ETH',  # 基础货币
+        'enabled': True  # 是否启用此交易对
+    },
+    'SOL/USDT': {
+        'symbol': 'SOL/USDT',  # 币安的合约符号格式
+        'base_currency': 'SOL',  # 基础货币
+        'enabled': True  # 是否启用此交易对
+    },
+    'BNB/USDT': {
+        'symbol': 'BNB/USDT',  # 币安的合约符号格式
+        'base_currency': 'BNB',  # 基础货币
+        'enabled': True  # 是否启用此交易对
+    }
+}
+
+signal_history = {}  # 改为字典，按交易对分别记录信号历史
 position = None
+
+# 获取启用的交易对列表
+enabled_symbols = [symbol for symbol, config in TRADE_CONFIGS.items() if config['enabled']]
 
 # 数据库相关变量
 db_connection = None
@@ -66,10 +98,52 @@ def init_database():
             db_connection = sqlite3.connect('/app/data/trading_bot.db', check_same_thread=False)
             cursor = db_connection.cursor()
             
-            # 创建价格数据表
+            # 检查并添加symbol字段到现有表（如果不存在）
+            try:
+                # 检查price_data表是否有symbol字段
+                cursor.execute("PRAGMA table_info(price_data)")
+                columns = [column[1] for column in cursor.fetchall()]
+                if 'symbol' not in columns:
+                    cursor.execute("ALTER TABLE price_data ADD COLUMN symbol TEXT")
+                    print("为price_data表添加symbol字段")
+            except:
+                pass
+            
+            try:
+                # 检查trading_signals表是否有symbol字段
+                cursor.execute("PRAGMA table_info(trading_signals)")
+                columns = [column[1] for column in cursor.fetchall()]
+                if 'symbol' not in columns:
+                    cursor.execute("ALTER TABLE trading_signals ADD COLUMN symbol TEXT")
+                    print("为trading_signals表添加symbol字段")
+            except:
+                pass
+            
+            try:
+                # 检查position_records表是否有symbol字段
+                cursor.execute("PRAGMA table_info(position_records)")
+                columns = [column[1] for column in cursor.fetchall()]
+                if 'symbol' not in columns:
+                    cursor.execute("ALTER TABLE position_records ADD COLUMN symbol TEXT")
+                    print("为position_records表添加symbol字段")
+            except:
+                pass
+            
+            try:
+                # 检查technical_indicators表是否有symbol字段
+                cursor.execute("PRAGMA table_info(technical_indicators)")
+                columns = [column[1] for column in cursor.fetchall()]
+                if 'symbol' not in columns:
+                    cursor.execute("ALTER TABLE technical_indicators ADD COLUMN symbol TEXT")
+                    print("为technical_indicators表添加symbol字段")
+            except:
+                pass
+            
+            # 创建价格数据表（如果不存在）
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS price_data (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    symbol TEXT NOT NULL,
                     timestamp TEXT NOT NULL,
                     price REAL NOT NULL,
                     high REAL NOT NULL,
@@ -91,10 +165,11 @@ def init_database():
                 )
             ''')
             
-            # 创建交易信号表
+            # 创建交易信号表（如果不存在）
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS trading_signals (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    symbol TEXT NOT NULL,
                     timestamp TEXT NOT NULL,
                     signal TEXT NOT NULL,
                     reason TEXT,
@@ -106,10 +181,11 @@ def init_database():
                 )
             ''')
             
-            # 创建持仓记录表
+            # 创建持仓记录表（如果不存在）
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS position_records (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    symbol TEXT NOT NULL,
                     timestamp TEXT NOT NULL,
                     side TEXT,
                     size REAL,
@@ -121,7 +197,7 @@ def init_database():
                 )
             ''')
             
-            # 创建交易统计表
+            # 创建交易统计表（如果不存在）
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS trading_stats (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -134,10 +210,11 @@ def init_database():
                 )
             ''')
             
-            # 创建技术指标历史表
+            # 创建技术指标历史表（如果不存在）
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS technical_indicators (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    symbol TEXT NOT NULL,
                     timestamp TEXT NOT NULL,
                     timeframe TEXT NOT NULL,
                     mid_prices TEXT,
@@ -170,10 +247,12 @@ def init_database():
             
     except Exception as e:
         print(f"数据库初始化失败: {e}")
+        import traceback
+        traceback.print_exc()
         return False
 
 
-def save_price_data(price_data):
+def save_price_data(price_data, symbol):
     """保存价格数据到数据库"""
     global db_connection
     try:
@@ -183,11 +262,12 @@ def save_price_data(price_data):
             
             cursor.execute('''
                 INSERT INTO price_data
-                (timestamp, price, high, low, volume, timeframe, price_change,
+                (symbol, timestamp, price, high, low, volume, timeframe, price_change,
                  sma_5, sma_20, sma_50, rsi, macd, macd_signal, macd_histogram,
                  bb_upper, bb_lower, bb_position, volume_ratio)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
+                symbol,
                 price_data['timestamp'],
                 price_data['price'],
                 price_data['high'],
@@ -214,7 +294,7 @@ def save_price_data(price_data):
         print(f"保存价格数据失败: {e}")
 
 
-def save_trading_signal(signal_data, price_data):
+def save_trading_signal(signal_data, price_data, symbol):
     """保存交易信号到数据库"""
     global db_connection
     try:
@@ -223,9 +303,10 @@ def save_trading_signal(signal_data, price_data):
             
             cursor.execute('''
                 INSERT INTO trading_signals
-                (timestamp, signal, reason, stop_loss, take_profit, confidence, price, is_fallback)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                (symbol, timestamp, signal, reason, stop_loss, take_profit, confidence, price, is_fallback)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
+                symbol,
                 signal_data.get('timestamp', datetime.now().strftime('%Y-%m-%d %H:%M:%S')),
                 signal_data['signal'],
                 signal_data['reason'],
@@ -242,7 +323,7 @@ def save_trading_signal(signal_data, price_data):
         print(f"保存交易信号失败: {e}")
 
 
-def save_position_record(position_data):
+def save_position_record(position_data, symbol):
     """保存持仓记录到数据库"""
     global db_connection
     try:
@@ -252,9 +333,10 @@ def save_position_record(position_data):
             if position_data:
                 cursor.execute('''
                     INSERT INTO position_records
-                    (timestamp, side, size, entry_price, unrealized_pnl, position_amt)
-                    VALUES (?, ?, ?, ?, ?, ?)
+                    (symbol, timestamp, side, size, entry_price, unrealized_pnl, position_amt)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
                 ''', (
+                    symbol,
                     datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                     position_data['side'],
                     position_data['size'],
@@ -265,9 +347,10 @@ def save_position_record(position_data):
             else:
                 cursor.execute('''
                     INSERT INTO position_records
-                    (timestamp, side, size, entry_price, unrealized_pnl, position_amt)
-                    VALUES (?, ?, ?, ?, ?, ?)
+                    (symbol, timestamp, side, size, entry_price, unrealized_pnl, position_amt)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
                 ''', (
+                    symbol,
                     datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                     None, 0, 0, 0, 0
                 ))
@@ -328,7 +411,7 @@ def load_trading_stats():
         print(f"加载交易统计失败: {e}")
 
 
-def get_historical_price_data(limit=100):
+def get_historical_price_data(symbol, limit=100):
     """获取历史价格数据"""
     global db_connection
     try:
@@ -336,9 +419,10 @@ def get_historical_price_data(limit=100):
             cursor = db_connection.cursor()
             cursor.execute('''
                 SELECT * FROM price_data
+                WHERE symbol = ?
                 ORDER BY timestamp DESC
                 LIMIT ?
-            ''', (limit,))
+            ''', (symbol, limit))
             
             results = cursor.fetchall()
             return results
@@ -348,7 +432,7 @@ def get_historical_price_data(limit=100):
         return []
 
 
-def get_historical_signals(limit=30):
+def get_historical_signals(symbol, limit=30):
     """获取历史交易信号"""
     global db_connection
     try:
@@ -357,9 +441,10 @@ def get_historical_signals(limit=30):
             cursor.execute('''
                 SELECT timestamp, signal, reason, stop_loss, take_profit, confidence, price, is_fallback
                 FROM trading_signals
+                WHERE symbol = ?
                 ORDER BY timestamp DESC
                 LIMIT ?
-            ''', (limit,))
+            ''', (symbol, limit))
             
             results = cursor.fetchall()
             return results
@@ -368,61 +453,72 @@ def get_historical_signals(limit=30):
         print(f"获取历史交易信号失败: {e}")
         return []
 
-
-def setup_exchange():
-    """设置交易所参数"""
-    try:
-        # 设置杠杆
-        exchange.set_leverage(TRADE_CONFIG['leverage'], TRADE_CONFIG['symbol'])
-        print(f"设置杠杆倍数: {TRADE_CONFIG['leverage']}x")
-
-        # 获取余额
-        balance = exchange.fetch_balance()
-        usdt_balance = balance['USDT']['free']
-        print(f"当前USDT余额: {usdt_balance:.2f}")
-
-        return True
-    except Exception as e:
-        print(f"交易所设置失败: {e}")
-        return False
-
-
 def calculate_technical_indicators(df):
-    """计算技术指标 - 来自第一个策略"""
+    """计算技术指标 - 优化版多时间周期分析"""
     try:
-        # 移动平均线
+        periods = GLOBAL_CONFIG['analysis_periods']
+        
+        # 移动平均线 - 使用优化后的周期
         df['sma_5'] = df['close'].rolling(window=5, min_periods=1).mean()
-        df['sma_20'] = df['close'].rolling(window=20, min_periods=1).mean()
-        df['sma_50'] = df['close'].rolling(window=50, min_periods=1).mean()
+        df['sma_12'] = df['close'].rolling(window=periods['short_term'], min_periods=1).mean()  # 1小时
+        df['sma_60'] = df['close'].rolling(window=periods['medium_term'], min_periods=1).mean()  # 5小时
+        df['sma_288'] = df['close'].rolling(window=periods['long_term'], min_periods=1).mean()  # 24小时
 
-        # 指数移动平均线
-        df['ema_12'] = df['close'].ewm(span=12).mean()
+        # 指数移动平均线 - 多周期EMA
+        df['ema_12'] = df['close'].ewm(span=periods['short_term']).mean()  # 1小时EMA
         df['ema_26'] = df['close'].ewm(span=26).mean()
+        df['ema_60'] = df['close'].ewm(span=periods['medium_term']).mean()  # 5小时EMA
+        df['ema_144'] = df['close'].ewm(span=144).mean()  # 12小时EMA
+        df['ema_288'] = df['close'].ewm(span=periods['long_term']).mean()  # 24小时EMA
+        
+        # MACD - 使用适合5分钟K线的参数
         df['macd'] = df['ema_12'] - df['ema_26']
         df['macd_signal'] = df['macd'].ewm(span=9).mean()
         df['macd_histogram'] = df['macd'] - df['macd_signal']
+        
+        # 多周期MACD
+        df['macd_long'] = df['ema_60'] - df['ema_144']
+        df['macd_long_signal'] = df['macd_long'].ewm(span=18).mean()
 
-        # 相对强弱指数 (RSI)
-        delta = df['close'].diff()
-        gain = (delta.where(delta > 0, 0)).rolling(14).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
-        rs = gain / loss
-        df['rsi'] = 100 - (100 / (1 + rs))
+        # 相对强弱指数 (RSI) - 多周期
+        for period in [7, 14, 21]:
+            delta = df['close'].diff()
+            gain = (delta.where(delta > 0, 0)).rolling(period).mean()
+            loss = (-delta.where(delta < 0, 0)).rolling(period).mean()
+            rs = gain / loss
+            df[f'rsi_{period}'] = 100 - (100 / (1 + rs))
 
-        # 布林带
-        df['bb_middle'] = df['close'].rolling(20).mean()
-        bb_std = df['close'].rolling(20).std()
-        df['bb_upper'] = df['bb_middle'] + (bb_std * 2)
-        df['bb_lower'] = df['bb_middle'] - (bb_std * 2)
-        df['bb_position'] = (df['close'] - df['bb_lower']) / (df['bb_upper'] - df['bb_lower'])
+        # 布林带 - 多周期
+        for period in [20, 50]:
+            df[f'bb_middle_{period}'] = df['close'].rolling(period).mean()
+            bb_std = df['close'].rolling(period).std()
+            df[f'bb_upper_{period}'] = df[f'bb_middle_{period}'] + (bb_std * 2)
+            df[f'bb_lower_{period}'] = df[f'bb_middle_{period}'] - (bb_std * 2)
+            df[f'bb_position_{period}'] = (df['close'] - df[f'bb_lower_{period}']) / (df[f'bb_upper_{period}'] - df[f'bb_lower_{period}'])
 
-        # 成交量均线
-        df['volume_ma'] = df['volume'].rolling(20).mean()
-        df['volume_ratio'] = df['volume'] / df['volume_ma']
+        # 成交量指标 - 多周期
+        for period in [20, 60]:
+            df[f'volume_ma_{period}'] = df['volume'].rolling(period).mean()
+        df['volume_ratio_short'] = df['volume'] / df['volume_ma_20']
+        df['volume_ratio_long'] = df['volume'] / df['volume_ma_60']
 
-        # 支撑阻力位
-        df['resistance'] = df['high'].rolling(20).max()
-        df['support'] = df['low'].rolling(20).min()
+        # 支撑阻力位 - 多周期
+        for period in [20, 60, 288]:
+            df[f'resistance_{period}'] = df['high'].rolling(period).max()
+            df[f'support_{period}'] = df['low'].rolling(period).min()
+
+        # 动量指标
+        df['momentum_5'] = df['close'] / df['close'].shift(5) - 1
+        df['momentum_10'] = df['close'] / df['close'].shift(10) - 1
+        df['momentum_20'] = df['close'] / df['close'].shift(20) - 1
+
+        # 价格变化率
+        for period in [1, 5, 10, 20]:
+            df[f'price_change_{period}'] = df['close'].pct_change(period)
+
+        # 波动率指标
+        df['volatility_20'] = df['close'].rolling(20).std()
+        df['volatility_60'] = df['close'].rolling(60).std()
 
         # 填充NaN值
         df = df.bfill().ffill()
@@ -432,39 +528,73 @@ def calculate_technical_indicators(df):
         print(f"技术指标计算失败: {e}")
         return df
 
-
-def get_support_resistance_levels(df, lookback=20):
-    """计算支撑阻力位"""
+def get_multi_timeframe_data(symbol):
+    """获取多时间周期数据"""
+    multi_timeframe = GLOBAL_CONFIG['multi_timeframe_analysis']
+    timeframe_data = {}
+    
     try:
-        recent_high = df['high'].tail(lookback).max()
-        recent_low = df['low'].tail(lookback).min()
-        current_price = df['close'].iloc[-1]
-
-        resistance_level = recent_high
-        support_level = recent_low
-
-        # 动态支撑阻力（基于布林带）
-        bb_upper = df['bb_upper'].iloc[-1]
-        bb_lower = df['bb_lower'].iloc[-1]
-
-        return {
-            'static_resistance': resistance_level,
-            'static_support': support_level,
-            'dynamic_resistance': bb_upper,
-            'dynamic_support': bb_lower,
-            'price_vs_resistance': ((resistance_level - current_price) / current_price) * 100,
-            'price_vs_support': ((current_price - support_level) / support_level) * 100
-        }
+        config = TRADE_CONFIGS[symbol]
+        
+        for tf_name, timeframe in multi_timeframe.items():
+            try:
+                # 根据时间周期调整数据点数量
+                if timeframe == '5m':
+                    limit = 288  # 24小时
+                elif timeframe == '15m':
+                    limit = 96   # 24小时
+                elif timeframe == '1h':
+                    limit = 24   # 24小时
+                elif timeframe == '4h':
+                    limit = 42   # 7天
+                else:
+                    limit = 100  # 默认
+                
+                ohlcv = exchange.fetch_ohlcv(config['symbol'], timeframe, limit=limit)
+                df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+                df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+                df = calculate_technical_indicators(df)
+                
+                current_data = df.iloc[-1]
+                
+                timeframe_data[tf_name] = {
+                    'timeframe': timeframe,
+                    'current_price': current_data['close'],
+                    'price_change': ((current_data['close'] - df.iloc[-2]['close']) / df.iloc[-2]['close']) * 100,
+                    'volume': current_data['volume'],
+                    'rsi_14': current_data.get('rsi_14', 0),
+                    'rsi_7': current_data.get('rsi_7', 0),
+                    'ema_12': current_data.get('ema_12', 0),
+                    'ema_60': current_data.get('ema_60', 0),
+                    'ema_288': current_data.get('ema_288', 0),
+                    'macd': current_data.get('macd', 0),
+                    'macd_signal': current_data.get('macd_signal', 0),
+                    'bb_position_20': current_data.get('bb_position_20', 0),
+                    'volume_ratio_short': current_data.get('volume_ratio_short', 0),
+                    'volatility_20': current_data.get('volatility_20', 0),
+                    'momentum_10': current_data.get('momentum_10', 0),
+                    'full_data': df
+                }
+                
+            except Exception as e:
+                print(f"获取 {symbol} {timeframe} 数据失败: {e}")
+                continue
+                
+        return timeframe_data
+        
     except Exception as e:
-        print(f"支撑阻力计算失败: {e}")
+        print(f"获取 {symbol} 多时间周期数据失败: {e}")
         return {}
 
-def get_btc_ohlcv_enhanced():
-    """增强版：获取BTC K线数据并计算技术指标"""
+
+def get_ohlcv_enhanced(symbol):
+    """增强版：获取指定交易对的K线数据并计算技术指标（支持多时间周期）"""
     try:
-        # 获取K线数据
-        ohlcv = exchange.fetch_ohlcv(TRADE_CONFIG['symbol'], TRADE_CONFIG['timeframe'],
-                                     limit=TRADE_CONFIG['data_points'])
+        config = TRADE_CONFIGS[symbol]
+        
+        # 获取主要时间周期的K线数据
+        ohlcv = exchange.fetch_ohlcv(config['symbol'], GLOBAL_CONFIG['timeframe'],
+                                     limit=GLOBAL_CONFIG['data_points'])
 
         df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
         df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
@@ -474,43 +604,65 @@ def get_btc_ohlcv_enhanced():
 
         current_data = df.iloc[-1]
         previous_data = df.iloc[-2]
-
-        # 获取技术分析数据
-        levels_analysis = get_support_resistance_levels(df)
+        
+        # 获取多时间周期数据
+        multi_tf_data = get_multi_timeframe_data(symbol)
 
         return {
+            'symbol': symbol,
             'price': current_data['close'],
             'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
             'high': current_data['high'],
             'low': current_data['low'],
             'volume': current_data['volume'],
-            'timeframe': TRADE_CONFIG['timeframe'],
+            'timeframe': GLOBAL_CONFIG['timeframe'],
             'price_change': ((current_data['close'] - previous_data['close']) / previous_data['close']) * 100,
             'kline_data': df[['timestamp', 'open', 'high', 'low', 'close', 'volume']].tail(10).to_dict('records'),
             'technical_data': {
+                # 短期指标
                 'sma_5': current_data.get('sma_5', 0),
-                'sma_20': current_data.get('sma_20', 0),
-                'sma_50': current_data.get('sma_50', 0),
-                'rsi': current_data.get('rsi', 0),
+                'sma_12': current_data.get('sma_12', 0),
+                'ema_12': current_data.get('ema_12', 0),
+                'rsi_7': current_data.get('rsi_7', 0),
+                'rsi_14': current_data.get('rsi_14', 0),
+                'momentum_5': current_data.get('momentum_5', 0),
+                'momentum_10': current_data.get('momentum_10', 0),
+                'volatility_20': current_data.get('volatility_20', 0),
+                
+                # 中期指标
+                'sma_60': current_data.get('sma_60', 0),
+                'ema_60': current_data.get('ema_60', 0),
+                'volume_ratio_short': current_data.get('volume_ratio_short', 0),
+                'volume_ratio_long': current_data.get('volume_ratio_long', 0),
+                
+                # 长期指标
+                'sma_288': current_data.get('sma_288', 0),
+                'ema_288': current_data.get('ema_288', 0),
+                
+                # MACD指标
                 'macd': current_data.get('macd', 0),
                 'macd_signal': current_data.get('macd_signal', 0),
                 'macd_histogram': current_data.get('macd_histogram', 0),
-                'bb_upper': current_data.get('bb_upper', 0),
-                'bb_lower': current_data.get('bb_lower', 0),
-                'bb_position': current_data.get('bb_position', 0),
-                'volume_ratio': current_data.get('volume_ratio', 0)
+                'macd_long': current_data.get('macd_long', 0),
+                
+                # 布林带
+                'bb_upper_20': current_data.get('bb_upper_20', 0),
+                'bb_lower_20': current_data.get('bb_lower_20', 0),
+                'bb_position_20': current_data.get('bb_position_20', 0),
+                'bb_position_50': current_data.get('bb_position_50', 0),
+                
+                # 支撑阻力
+                'resistance_20': current_data.get('resistance_20', 0),
+                'support_20': current_data.get('support_20', 0),
+                'resistance_60': current_data.get('resistance_60', 0),
+                'support_60': current_data.get('support_60', 0),
             },
-            'levels_analysis': levels_analysis,
+            'multi_timeframe_data': multi_tf_data,
             'full_data': df
         }
     except Exception as e:
-        print(f"获取增强K线数据失败: {e}")
+        print(f"获取 {symbol} 增强K线数据失败: {e}")
         return None
-
-
-def get_btc_ohlcv():
-    """获取BTC/USDT的K线数据（1小时或15分钟）- 保持向后兼容"""
-    return get_btc_ohlcv_enhanced()
 
 
 def safe_json_parse(json_str):
@@ -539,17 +691,21 @@ def create_fallback_signal(price_data):
         "stop_loss": price_data['price'] * 0.98,  # -2%
         "take_profit": price_data['price'] * 1.02,  # +2%
         "confidence": "LOW",
+        "position_size_percent": 5,  # 默认5%仓位
+        "leverage": 5,  # 默认5倍杠杆
+        "action": "HOLD",
         "is_fallback": True
     }
 
 
-def get_current_position():
-    """获取当前持仓情况"""
+def get_current_position(symbol):
+    """获取指定交易对的当前持仓情况"""
     try:
-        positions = exchange.fetch_positions([TRADE_CONFIG['symbol']])
+        config = TRADE_CONFIGS[symbol]
+        positions = exchange.fetch_positions([config['symbol']])
 
         # 标准化配置的交易对符号用于比较
-        config_symbol_normalized = 'BTC/USDT:USDT'
+        config_symbol_normalized = f"{symbol}:USDT"
 
         for pos in positions:
 
@@ -567,7 +723,7 @@ def get_current_position():
                     else:
                         position_amt = contracts
 
-                print(f"调试 - 持仓量: {position_amt}")
+                print(f"{symbol} 调试 - 持仓量: {position_amt}")
 
                 if position_amt != 0:  # 有持仓
                     side = 'long' if position_amt > 0 else 'short'
@@ -580,32 +736,32 @@ def get_current_position():
                         'symbol': pos['symbol']  # 返回实际的symbol用于调试
                     }
 
-        print("调试 - 未找到有效持仓")
+        print(f"{symbol} 调试 - 未找到有效持仓")
         return None
 
     except Exception as e:
-        print(f"获取持仓失败: {e}")
+        print(f"获取 {symbol} 持仓失败: {e}")
         import traceback
         traceback.print_exc()
         return None
 
 
-def get_btc_funding_and_open_interest():
-    """获取BTC永续合约的资金费率和未平合约数据"""
+def get_funding_and_open_interest(symbol):
+    """获取指定交易对永续合约的资金费率和未平合约数据"""
     try:
         # 获取资金费率
-        funding_rate = exchange.fetch_funding_rate('BTC/USDT:USDT')
+        funding_rate = exchange.fetch_funding_rate(f'{symbol}:USDT')
         current_funding_rate = funding_rate.get('fundingRate', 0)
         funding_timestamp = funding_rate.get('timestamp', 0)
 
-        print(f"调试 - 当前资金费率: {current_funding_rate}, 时间戳: {funding_timestamp}")
+        print(f"{symbol} 调试 - 当前资金费率: {current_funding_rate}, 时间戳: {funding_timestamp}")
         
         # 获取未平合约数据
-        open_interest = exchange.fetch_open_interest('BTC/USDT:USDT')
+        open_interest = exchange.fetch_open_interest(f'{symbol}:USDT')
         current_open_interest = open_interest.get('openInterestAmount', 0)
         oi_timestamp = open_interest.get('timestamp', 0)
 
-        print(f"调试 - 当前未平合约: {current_open_interest}, 时间戳: {oi_timestamp}")
+        print(f"{symbol} 调试 - 当前未平合约: {current_open_interest}, 时间戳: {oi_timestamp}")
         
         # 获取历史资金费率来计算平均值
         try:
@@ -613,7 +769,7 @@ def get_btc_funding_and_open_interest():
             funding_history = []
             for i in range(8, 0, -1):  # 获取最近8个时间点的数据
                 try:
-                    historical_funding = exchange.fetch_funding_rate_history('BTC/USDT:USDT', limit=1, params={'endTime': funding_timestamp - i * 8 * 60 * 60 * 1000})
+                    historical_funding = exchange.fetch_funding_rate_history(f'{symbol}:USDT', limit=1, params={'endTime': funding_timestamp - i * 8 * 60 * 60 * 1000})
                     if historical_funding:
                         funding_history.append(historical_funding[0]['fundingRate'])
                 except:
@@ -640,7 +796,7 @@ def get_btc_funding_and_open_interest():
         }
         
     except Exception as e:
-        print(f"获取资金费率和未平合约数据失败: {e}")
+        print(f"获取 {symbol} 资金费率和未平合约数据失败: {e}")
         # 返回默认值
         return {
             'current_funding_rate': 1.25e-05,
@@ -652,8 +808,69 @@ def get_btc_funding_and_open_interest():
         }
 
 
-def generate_enhanced_prompt(price_data):
-    """生成类似示例的详细提示词"""
+def get_all_symbols_data():
+    """获取所有启用交易对的数据"""
+    all_data = {}
+    all_positions = {}
+    total_exposure = 0
+    total_margin_used = 0
+    
+    try:
+        # 获取账户总余额
+        balance = exchange.fetch_balance()
+        if 'USDT' in balance:
+            total_balance = float(balance['USDT'].get('total', 0))
+            free_balance = float(balance['USDT'].get('free', 0))
+        else:
+            total_balance = 0
+            free_balance = 0
+    except:
+        total_balance = 0
+        free_balance = 0
+    
+    # 遍历所有启用的交易对
+    for symbol in enabled_symbols:
+        try:
+            # 获取价格数据
+            price_data = get_ohlcv_enhanced(symbol)
+            if price_data:
+                all_data[symbol] = price_data
+            
+            # 获取持仓信息
+            position = get_current_position(symbol)
+            all_positions[symbol] = position
+            
+            # 计算总敞口和保证金使用
+            if position:
+                # 计算持仓价值（USDT）
+                position_value = abs(position['position_amt']) * position['entry_price']
+                total_exposure += position_value
+                
+                # 估算保证金使用（假设平均10倍杠杆）
+                estimated_margin = position_value / 10
+                total_margin_used += estimated_margin
+                
+        except Exception as e:
+            print(f"获取 {symbol} 数据失败: {e}")
+            continue
+    
+    return {
+        'symbols_data': all_data,
+        'positions': all_positions,
+        'account_info': {
+            'total_balance': total_balance,
+            'free_balance': free_balance,
+            'total_exposure': total_exposure,
+            'total_margin_used': total_margin_used,
+            'margin_usage_percent': (total_margin_used / total_balance * 100) if total_balance > 0 else 0,
+            'exposure_to_balance_ratio': (total_exposure / total_balance) if total_balance > 0 else 0
+        }
+    }
+
+
+def generate_enhanced_prompt(price_data, symbol, all_symbols_info=None):
+    """生成增强的多币种综合分析提示词"""
+    config = TRADE_CONFIGS[symbol]
     
     # 计算运行时间
     current_time = datetime.now()
@@ -668,46 +885,78 @@ def generate_enhanced_prompt(price_data):
     minutes_running = int((current_time - start_time).total_seconds() / 60)
     
     # 获取历史数据
-    historical_prices = get_historical_price_data(20)
-    historical_signals = get_historical_signals(10)
+    historical_prices = get_historical_price_data(symbol, 20)
+    historical_signals = get_historical_signals(symbol, 10)
     
     # 获取当前持仓
-    current_pos = get_current_position()
+    current_pos = get_current_position(symbol)
     
     # 获取资金费率和未平合约数据
-    funding_data = get_btc_funding_and_open_interest()
+    funding_data = get_funding_and_open_interest(symbol)
     
     # 获取技术指标数据
     tech = price_data.get('technical_data', {})
-    levels = price_data.get('levels_analysis', {})
+    
+    # 获取账户信息
+    if all_symbols_info:
+        account_info = all_symbols_info['account_info']
+        all_positions = all_symbols_info['positions']
+        all_data = all_symbols_info['symbols_data']
+    else:
+        # 如果没有提供多币种信息，使用原有逻辑
+        try:
+            balance = exchange.fetch_balance()
+            if 'USDT' in balance:
+                usdt_balance = float(balance['USDT'].get('free', 0))
+                total_balance = float(balance['USDT'].get('total', 0))
+            else:
+                usdt_balance = 0
+                total_balance = 0
+        except:
+            usdt_balance = 0
+            total_balance = 0
+        
+        account_info = {
+            'total_balance': total_balance,
+            'free_balance': usdt_balance,
+            'total_exposure': 0,
+            'total_margin_used': 0,
+            'margin_usage_percent': 0,
+            'exposure_to_balance_ratio': 0
+        }
+        all_positions = {symbol: current_pos}
+        all_data = {symbol: price_data}
+    
+    # 多时间周期分析
+    multi_tf_analysis = ""
+    if price_data.get('multi_timeframe_data'):
+        multi_tf = price_data['multi_timeframe_data']
+        multi_tf_analysis = f"""
+多时间周期技术分析:
+"""
+        for tf_name, tf_data in multi_tf.items():
+            if tf_data:
+                tf_timeframe = tf_data['timeframe']
+                multi_tf_analysis += f"- {tf_timeframe}: 价格${tf_data['current_price']:.2f} ({tf_data['price_change']:+.2f}%), RSI14:{tf_data['rsi_14']:.1f}, EMA12:{tf_data['ema_12']:.2f}, MACD:{tf_data['macd']:.4f}\n"
     
     # 准备价格序列数据
     df = price_data.get('full_data')
     if df is not None and len(df) >= 10:
         # 获取最近10个数据点的价格和指标
         recent_prices = df['close'].tail(10).tolist()
-        recent_emas = df['ema_20'].tail(10).tolist() if 'ema_20' in df.columns else [0] * 10
+        recent_emas = df['ema_12'].tail(10).tolist() if 'ema_12' in df.columns else [0] * 10
         recent_macd = df['macd'].tail(10).tolist() if 'macd' in df.columns else [0] * 10
-        recent_rsi_7 = df['rsi'].tail(10).tolist() if 'rsi' in df.columns else [0] * 10
-        
-        # 计算14周期RSI（如果不存在）
-        if 'rsi_14' not in df.columns:
-            delta = df['close'].diff()
-            gain = (delta.where(delta > 0, 0)).rolling(14).mean()
-            loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
-            rs = gain / loss
-            df['rsi_14'] = 100 - (100 / (1 + rs))
-        
-        recent_rsi_14 = df['rsi_14'].tail(10).tolist()
+        recent_rsi_7 = df['rsi_7'].tail(10).tolist() if 'rsi_7' in df.columns else [0] * 10
+        recent_rsi_14 = df['rsi_14'].tail(10).tolist() if 'rsi_14' in df.columns else [0] * 10
         
         # 获取更长周期的数据（4小时）
         try:
-            longer_ohlcv = exchange.fetch_ohlcv(TRADE_CONFIG['symbol'], '4h', limit=20)
+            longer_ohlcv = exchange.fetch_ohlcv(config['symbol'], '4h', limit=20)
             longer_df = pd.DataFrame(longer_ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
             longer_df = calculate_technical_indicators(longer_df)
             
-            longer_ema_20 = longer_df['ema_20'].iloc[-1] if 'ema_20' in longer_df.columns else 0
-            longer_ema_50 = longer_df['ema_50'].iloc[-1] if 'ema_50' in longer_df.columns else 0
+            longer_ema_20 = longer_df['ema_12'].iloc[-1] if 'ema_12' in longer_df.columns else 0
+            longer_ema_50 = longer_df['ema_60'].iloc[-1] if 'ema_60' in longer_df.columns else 0
             
             # 计算ATR
             high_low = longer_df['high'] - longer_df['low']
@@ -729,7 +978,7 @@ def generate_enhanced_prompt(price_data):
             sharpe_ratio = returns.mean() / returns.std() * (252 ** 0.5) if returns.std() != 0 else 0
             
         except Exception as e:
-            print(f"获取长周期数据失败: {e}")
+            print(f"获取 {symbol} 长周期数据失败: {e}")
             longer_ema_20 = 0
             longer_ema_50 = 0
             atr_3 = 0
@@ -739,12 +988,12 @@ def generate_enhanced_prompt(price_data):
             sharpe_ratio = 0
     else:
         recent_prices = [price_data['price']] * 10
-        recent_emas = [tech.get('sma_20', 0)] * 10
+        recent_emas = [tech.get('ema_12', 0)] * 10
         recent_macd = [tech.get('macd', 0)] * 10
-        recent_rsi_7 = [tech.get('rsi', 0)] * 10
-        recent_rsi_14 = [tech.get('rsi', 0)] * 10
-        longer_ema_20 = tech.get('sma_20', 0)
-        longer_ema_50 = tech.get('sma_50', 0)
+        recent_rsi_7 = [tech.get('rsi_7', 0)] * 10
+        recent_rsi_14 = [tech.get('rsi_14', 0)] * 10
+        longer_ema_20 = tech.get('ema_12', 0)
+        longer_ema_50 = tech.get('ema_60', 0)
         atr_3 = 0
         atr_14 = 0
         current_volume = price_data.get('volume', 0)
@@ -754,94 +1003,162 @@ def generate_enhanced_prompt(price_data):
     # 获取持仓信息
     position_info = "无持仓"
     if current_pos:
-        position_info = f"{current_pos['side']}仓 {current_pos['size']} BTC, 入场价: ${current_pos['entry_price']:.2f}, 浮盈: ${current_pos['unrealized_pnl']:.2f}"
+        position_info = f"{current_pos['side']}仓 {current_pos['size']} {symbol.split('/')[0]}, 入场价: ${current_pos['entry_price']:.2f}, 浮盈: ${current_pos['unrealized_pnl']:.2f}"
     
-    # 获取账户信息
-    try:
-        balance = exchange.fetch_balance()
-        usdt_balance = balance['USDT']['free']
-        total_balance = balance['USDT']['total']
-    except:
-        usdt_balance = 0
-        total_balance = 0
+    # 构建多币种综合分析提示词
+    prompt = f"""你已经开始交易 {minutes_running} 分钟。
+当前时间是 {current_time.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]} 
+您已经被调用 {trading_stats['total_calls']} 次.
+
+=== 多币种综合投资组合分析 ===
+
+当前账户总览:
+- 总余额: {account_info['total_balance']:.2f} USDT
+- 可用余额: {account_info['free_balance']:.2f} USDT
+- 总敞口: {account_info['total_exposure']:.2f} USDT
+- 保证金使用: {account_info['total_margin_used']:.2f} USDT ({account_info['margin_usage_percent']:.1f}%)
+- 敞口/余额比: {account_info['exposure_to_balance_ratio']:.2f}
+
+当前所有持仓情况:
+"""
     
-    # 构建详细提示词
-    prompt = f"""It has been {minutes_running} minutes since you started trading. The current time is {current_time.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]} and you've been invoked {trading_stats['total_calls']} times. Below, we are providing you with a variety of state data, price data, and predictive signals so you can discover alpha. Below that is your current account information, value, performance, positions, etc.
-ALL OF THE PRICE OR SIGNAL DATA BELOW IS ORDERED: OLDEST → NEWEST
-Timeframes note: Unless stated otherwise in a section title, intraday series are provided at {TRADE_CONFIG['timeframe']} intervals. If a coin uses a different interval, it is explicitly stated in that coin's section.
+    # 添加所有币种的持仓信息
+    for sym, pos in all_positions.items():
+        if pos:
+            pnl_percent = (pos['unrealized_pnl'] / (pos['size'] * pos['entry_price']) * 100) if pos['entry_price'] > 0 else 0
+            prompt += f"- {sym}: {pos['side']}仓 {pos['size']:.6f}, 入场价: ${pos['entry_price']:.2f}, 浮盈: ${pos['unrealized_pnl']:.2f} ({pnl_percent:+.2f}%)\n"
+        else:
+            prompt += f"- {sym}: 无持仓\n"
+    
+    prompt += f"""
 
-CURRENT MARKET STATE FOR ALL COINS
-ALL BTC DATA
-current_price = {price_data['price']}, current_ema20 = {tech.get('sma_20', 0)}, current_macd = {tech.get('macd', 0)}, current_rsi (7 period) = {tech.get('rsi', 0)}
-In addition, here is the latest BTC open interest and funding rate for perps (the instrument you are trading):
-Open Interest: Latest: {funding_data['current_open_interest']:.2f}  Average: {funding_data['avg_open_interest']:.2f}
-Funding Rate: {funding_data['current_funding_rate']:.8f}
-Intraday series (by minute, oldest → latest):
-Mid prices: {[f"{p:.1f}" for p in recent_prices]}
-EMA indicators (20-period): {[f"{e:.3f}" for e in recent_emas]}
-MACD indicators: {[f"{m:.3f}" for m in recent_macd]}
-RSI indicators (7-Period): {[f"{r:.3f}" for r in recent_rsi_7]}
-RSI indicators (14-Period): {[f"{r:.3f}" for r in recent_rsi_14]}
-Longer-term context (4-hour timeframe):
-20-Period EMA: {longer_ema_20:.3f} vs. 50-Period EMA: {longer_ema_50:.3f}
-3-Period ATR: {atr_3:.3f} vs. 14-Period ATR: {atr_14:.3f}
-Current Volume: {current_volume:.3f} vs. Average Volume: {avg_volume:.3f}
-Sharpe Ratio: {sharpe_ratio:.3f}
+=== 当前分析币种: {symbol} 详细数据 ===
 
-CURRENT ACCOUNT AND POSITION STATUS
-Account Balance: {usdt_balance:.2f} USDT (Free) / {total_balance:.2f} USDT (Total)
-Current Position: {position_info}
-Leverage: {TRADE_CONFIG['leverage']}x
-Trade Amount: {TRADE_CONFIG['amount']} BTC
+当前价格: {price_data['price']} USDT
+资金费率: {funding_data['current_funding_rate']:.8f}
+未平合约: {funding_data['current_open_interest']:.2f}
 
-RECENT TRADING HISTORY
-Last 5 Signals:
+{multi_tf_analysis}
+
+主要时间周期 ({GLOBAL_CONFIG['timeframe']}) 技术指标:
+短期指标 (1-5小时):
+- SMA5: {tech.get('sma_5', 0):.2f}, SMA12: {tech.get('sma_12', 0):.2f}, EMA12: {tech.get('ema_12', 0):.2f}
+- RSI7: {tech.get('rsi_7', 0):.1f}, RSI14: {tech.get('rsi_14', 0):.1f}
+- 动量5: {tech.get('momentum_5', 0):+.3%}, 动量10: {tech.get('momentum_10', 0):+.3%}
+- 波动率20: {tech.get('volatility_20', 0):.4f}
+
+中期指标 (5小时):
+- SMA60: {tech.get('sma_60', 0):.2f}, EMA60: {tech.get('ema_60', 0):.2f}
+- 成交量比率(短期): {tech.get('volume_ratio_short', 0):.2f}
+- 成交量比率(长期): {tech.get('volume_ratio_long', 0):.2f}
+
+长期指标 (24小时):
+- SMA288: {tech.get('sma_288', 0):.2f}, EMA288: {tech.get('ema_288', 0):.2f}
+
+MACD指标:
+- 短期MACD: {tech.get('macd', 0):.4f}, 信号线: {tech.get('macd_signal', 0):.4f}, 柱状图: {tech.get('macd_histogram', 0):.4f}
+- 长期MACD: {tech.get('macd_long', 0):.4f}
+
+布林带指标:
+- 20周期布林带位置: {tech.get('bb_position_20', 0):.2%}
+- 50周期布林带位置: {tech.get('bb_position_50', 0):.2%}
+
+支撑阻力位:
+- 短期支撑: {tech.get('support_20', 0):.2f} | 短期阻力: {tech.get('resistance_20', 0):.2f}
+- 中期支撑: {tech.get('support_60', 0):.2f} | 中期阻力: {tech.get('resistance_60', 0):.2f}
+
+价格序列 (最近10个): {[f"{p:.1f}" for p in recent_prices]}
+EMA指标序列 (12周期): {[f"{e:.3f}" for e in recent_emas]}
+MACD指标序列: {[f"{m:.3f}" for m in recent_macd]}
+RSI指标序列 (7周期): {[f"{r:.3f}" for r in recent_rsi_7]}
+RSI指标序列 (14周期): {[f"{r:.3f}" for r in recent_rsi_14]}
+
+长周期技术面 (4小时):
+- EMA12: {longer_ema_20:.3f} vs EMA60: {longer_ema_50:.3f}
+- ATR3: {atr_3:.3f} vs ATR14: {atr_14:.3f}
+- 当前成交量: {current_volume:.3f} vs 平均成交量: {avg_volume:.3f}
+- 夏普比率: {sharpe_ratio:.3f}
+
+最近交易信号 (最近5次):
 """
     
     # 添加最近信号历史
     for i, signal in enumerate(historical_signals[:5]):
-        prompt += f"{i+1}. {signal[2]} at {signal[1]} - Confidence: {signal[6]}, Price: ${signal[7]:.2f}\n"
+        prompt += f"{i+1}. {signal[2]} at {signal[1]} - 信心: {signal[6]}, 价格: ${signal[7]:.2f}\n"
+    
+    # 添加其他币种的简要信息
+    if all_symbols_info and len(all_data) > 1:
+        prompt += "\n=== 其他币种概况 ===\n"
+        for sym, data in all_data.items():
+            if sym != symbol and data:
+                other_pos = all_positions.get(sym)
+                other_tech = data.get('technical_data', {})
+                other_price = data.get('price', 0)
+                other_change = data.get('price_change', 0)
+                
+                pos_status = f"({other_pos['side']}仓)" if other_pos else "(无持仓)"
+                prompt += f"- {sym}: ${other_price:.2f} ({other_change:+.2f}%) RSI:{other_tech.get('rsi', 0):.1f} {pos_status}\n"
     
     prompt += f"""
-TECHNICAL ANALYSIS SUMMARY
-Support Levels: {levels.get('static_support', 0):.2f} (Static) / {levels.get('dynamic_support', 0):.2f} (Dynamic)
-Resistance Levels: {levels.get('static_resistance', 0):.2f} (Static) / {levels.get('dynamic_resistance', 0):.2f} (Dynamic)
-Bollinger Band Position: {tech.get('bb_position', 0):.2%}
-Volume Ratio: {tech.get('volume_ratio', 0):.2f}
 
-TRADING INSTRUCTIONS
-Based on the comprehensive market data above, provide a trading decision for BTC/USDT {TRADE_CONFIG['timeframe']} timeframe.
+=== 交易决策指令 ===
 
-IMPORTANT: Respond with a valid JSON object containing:
-- signal: "BUY", "SELL", or "HOLD"
-- reason: Your detailed analysis reasoning
-- stop_loss: Specific price level for stop loss
-- take_profit: Specific price level for take profit
-- confidence: "HIGH", "MEDIUM", or "LOW"
+基于以上多币种综合分析，为 {symbol} 提供交易决策。
 
-Example format:
-{{"signal": "BUY", "reason": "Strong bullish momentum with RSI oversold", "stop_loss": 108000, "take_profit": 112000, "confidence": "HIGH"}}
+重要风险管理原则:
+1. 总敞口不应超过账户余额的300%
+2. 单个币种仓位不超过总余额的50%
+3. 保证金使用率不超过70%
+4. 根据当前整体持仓情况动态调整仓位大小
+5. 考虑与其他币种的相关性，避免过度集中风险
+
+仓位和杠杆设置策略:
+- 高信心信号 + 低整体敞口: 可使用较大仓位(15-25%)和中等杠杆(5-10x)
+- 中等信心信号 + 中等敞口: 使用适中仓位(8-15%)和保守杠杆(3-7x)
+- 低信心信号 + 高敞口: 使用小仓位(3-8%)和低杠杆(2-5x)
+- 已有同向持仓: 考虑增加仓位或保持现状
+- 已有反向持仓: 考虑平仓反转或减仓
+
+请返回JSON格式的交易决策:
+{{
+  "signal": "BUY" | "SELL" | "HOLD",
+  "reason": "详细分析理由，包括多币种综合考量",
+  "stop_loss": 具体止损价格,
+  "take_profit": 具体止盈价格,
+  "confidence": "HIGH" | "MEDIUM" | "LOW",
+  "position_size_percent": 仓位大小(1-100，基于可用余额百分比),
+  "leverage": 杠杆倍数(2-20),
+  "action": "OPEN" | "CLOSE" | "INCREASE" | "DECREASE" | "HOLD",
+  "risk_assessment": "风险评估说明"
+}}
 """
-    
     return prompt
 
 
-def analyze_with_deepseek(price_data):
-    """使用DeepSeek分析市场并生成交易信号（增强版）"""
+def analyze_with_deepseek(price_data, symbol, all_symbols_info=None):
+    """使用DeepSeek进行多币种综合分析并生成交易信号"""
     
     # 更新统计
     trading_stats['total_calls'] += 1
     trading_stats['last_signal_time'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     
-    # 生成增强提示词
-    prompt = generate_enhanced_prompt(price_data)
+    # 如果没有提供多币种信息，获取一次
+    if all_symbols_info is None:
+        all_symbols_info = get_all_symbols_data()
+    
+    # 生成多币种综合分析提示词
+    prompt = generate_enhanced_prompt(price_data, symbol, all_symbols_info)
+
+    print(f"{symbol} DeepSeek多币种综合分析提示词生成完毕，准备请求DeepSeek API...")
+    print(f"{symbol} 提示词长度: {len(prompt)} 字符")
+    print(f"{symbol} 完整提示词:\n{prompt}")
 
     try:
         response = deepseek_client.chat.completions.create(
             model="deepseek-chat",
             messages=[
                 {"role": "system",
-                 "content": "You are a professional cryptocurrency trading analyst specializing in BTC/USDT futures trading. Analyze the provided market data comprehensively and provide trading signals in the exact JSON format requested. Response with Chinese."},
+                 "content": f"你是一个专业的加密货币投资组合分析师，专门进行多币种综合分析。你需要基于整体投资组合的风险状况来制定交易决策，而不仅仅是单个币种的技术分析。请严格按照要求的JSON格式返回交易信号，使用中文回复。"},
                 {"role": "user", "content": prompt}
             ],
             stream=False,
@@ -850,7 +1167,7 @@ def analyze_with_deepseek(price_data):
 
         # 安全解析JSON
         result = response.choices[0].message.content
-        print(f"DeepSeek原始回复: {result}")
+        # print(f"{symbol} DeepSeek原始回复: {result}")
 
         # 提取JSON部分
         start_idx = result.find('{')
@@ -866,51 +1183,72 @@ def analyze_with_deepseek(price_data):
             signal_data = create_fallback_signal(price_data)
 
         # 验证必需字段
-        required_fields = ['signal', 'reason', 'stop_loss', 'take_profit', 'confidence']
+        required_fields = ['signal', 'reason', 'stop_loss', 'take_profit', 'confidence', 'position_size_percent', 'leverage', 'action']
         if not all(field in signal_data for field in required_fields):
             signal_data = create_fallback_signal(price_data)
+            # 为备用信号添加默认字段
+            signal_data['position_size_percent'] = 10  # 默认10%
+            signal_data['leverage'] = 10  # 默认10倍杠杆
+            signal_data['action'] = 'HOLD'
+
+        # 添加风险评估字段（如果没有）
+        if 'risk_assessment' not in signal_data:
+            signal_data['risk_assessment'] = "基于当前投资组合状况的风险评估"
 
         # 保存信号到历史记录
         signal_data['timestamp'] = price_data['timestamp']
-        signal_history.append(signal_data)
-        if len(signal_history) > 30:
-            signal_history.pop(0)
+        
+        # 按交易对分别记录信号历史
+        if symbol not in signal_history:
+            signal_history[symbol] = []
+        
+        signal_history[symbol].append(signal_data)
+        if len(signal_history[symbol]) > 30:
+            signal_history[symbol].pop(0)
 
         # 保存到数据库
-        save_trading_signal(signal_data, price_data)
+        save_trading_signal(signal_data, price_data, symbol)
         update_trading_stats()
 
-        # 信号统计
-        signal_count = len([s for s in signal_history if s.get('signal') == signal_data['signal']])
-        total_signals = len(signal_history)
-        print(f"信号统计: {signal_data['signal']} (最近{total_signals}次中出现{signal_count}次)")
+        # 信号统计（按交易对分别统计）
+        symbol_signals = signal_history.get(symbol, [])
+        signal_count = len([s for s in symbol_signals if s.get('signal') == signal_data['signal']])
+        total_signals = len(symbol_signals)
+        print(f"{symbol} 信号统计: {signal_data['signal']} (最近{total_signals}次中出现{signal_count}次)")
 
-        # 信号连续性检查
-        if len(signal_history) >= 3:
-            last_three = [s['signal'] for s in signal_history[-3:]]
+        # 信号连续性检查（按交易对分别检查）
+        if len(symbol_signals) >= 3:
+            last_three = [s['signal'] for s in symbol_signals[-3:]]
             if len(set(last_three)) == 1:
-                print(f"⚠️ 注意：连续3次{signal_data['signal']}信号")
+                print(f"{symbol} ⚠️ 注意：连续3次{signal_data['signal']}信号")
+
+        # 打印多币种分析结果
+        print(f"{symbol} 多币种综合分析结果:")
+        print(f"  信号: {signal_data['signal']}")
+        print(f"  仓位: {signal_data['position_size_percent']}%")
+        print(f"  杠杆: {signal_data['leverage']}x")
+        print(f"  风险评估: {signal_data.get('risk_assessment', 'N/A')}")
 
         return signal_data
 
     except Exception as e:
-        print(f"DeepSeek分析失败: {e}")
+        print(f"{symbol} DeepSeek多币种分析失败: {e}")
         return create_fallback_signal(price_data)
 
 
-def analyze_with_deepseek_with_retry(price_data, max_retries=2):
-    """带重试的DeepSeek分析"""
+def analyze_with_deepseek_with_retry(price_data, symbol, all_symbols_info=None, max_retries=2):
+    """带重试的DeepSeek多币种分析"""
     for attempt in range(max_retries):
         try:
-            signal_data = analyze_with_deepseek(price_data)
+            signal_data = analyze_with_deepseek(price_data, symbol, all_symbols_info)
             if signal_data and not signal_data.get('is_fallback', False):
                 return signal_data
 
-            print(f"第{attempt + 1}次尝试失败，进行重试...")
+            print(f"{symbol} 第{attempt + 1}次尝试失败，进行重试...")
             time.sleep(1)
 
         except Exception as e:
-            print(f"第{attempt + 1}次尝试异常: {e}")
+            print(f"{symbol} 第{attempt + 1}次尝试异常: {e}")
             if attempt == max_retries - 1:
                 return create_fallback_signal(price_data)
             time.sleep(1)
@@ -918,175 +1256,201 @@ def analyze_with_deepseek_with_retry(price_data, max_retries=2):
     return create_fallback_signal(price_data)
 
 
-def execute_trade(signal_data, price_data):
+def execute_trade(signal_data, price_data, symbol):
     """执行交易 - 币安版本（增强版）"""
-    global position
+    config = TRADE_CONFIGS[symbol]
+    current_position = get_current_position(symbol)
 
-    current_position = get_current_position()
-
-    print(f"交易信号: {signal_data['signal']}")
-    print(f"信心程度: {signal_data['confidence']}")
-    print(f"理由: {signal_data['reason']}")
-    print(f"止损: ${signal_data['stop_loss']:,.2f}")
-    print(f"止盈: ${signal_data['take_profit']:,.2f}")
-    print(f"当前持仓: {current_position}")
+    print(f"{symbol} 交易信号: {signal_data['signal']}")
+    print(f"{symbol} 信心程度: {signal_data['confidence']}")
+    print(f"{symbol} 理由: {signal_data['reason']}")
+    print(f"{symbol} 止损: ${signal_data['stop_loss']:,.2f}")
+    print(f"{symbol} 止盈: ${signal_data['take_profit']:,.2f}")
+    print(f"{symbol} 当前持仓: {current_position}")
 
     # 风险管理：低信心信号不执行
-    if signal_data['confidence'] == 'LOW' and not TRADE_CONFIG['test_mode']:
-        print("⚠️ 低信心信号，跳过执行")
+    if signal_data['confidence'] == 'LOW' and not GLOBAL_CONFIG['test_mode']:
+        print(f"{symbol} ⚠️ 低信心信号，跳过执行")
         return
 
-    if TRADE_CONFIG['test_mode']:
-        print("测试模式 - 仅模拟交易")
+    if GLOBAL_CONFIG['test_mode']:
+        print(f"{symbol} 测试模式 - 仅模拟交易")
         return
 
     try:
         # 获取账户余额
         balance = exchange.fetch_balance()
-        usdt_balance = balance['USDT']['free']
-
-        # 智能保证金检查
-        required_margin = 0
-
-        if signal_data['signal'] == 'BUY':
-            if current_position and current_position['side'] == 'short':
-                # 平空仓 + 开多仓：需要额外保证金
-                required_margin = price_data['price'] * TRADE_CONFIG['amount'] / TRADE_CONFIG['leverage']
-                operation_type = "平空开多"
-            elif not current_position:
-                # 开多仓：需要保证金
-                required_margin = price_data['price'] * TRADE_CONFIG['amount'] / TRADE_CONFIG['leverage']
-                operation_type = "开多仓"
+        # 检查余额结构并获取USDT余额
+        if 'USDT' in balance:
+            usdt_balance = balance['USDT'].get('free', 0)
+            if isinstance(usdt_balance, (int, float)):
+                # 确保是数字类型
+                usdt_balance = float(usdt_balance)
+                print(f"{symbol} 可用USDT余额: {usdt_balance:.2f} USDT")
             else:
-                # 已持有多仓：不需要额外保证金
-                required_margin = 0
-                operation_type = "保持多仓"
+                print(f"{symbol} 警告 - USDT余额不是数字类型: {usdt_balance}")
+                usdt_balance = 0  # 如果不是数字，设为0
+        else:
+            print(f"{symbol} 未找到USDT余额信息")
+            print(f"{symbol} 可用余额类型: {list(balance.keys())}")
+            usdt_balance = 0
 
-        elif signal_data['signal'] == 'SELL':
-            if current_position and current_position['side'] == 'long':
-                # 平多仓 + 开空仓：需要额外保证金
-                required_margin = price_data['price'] * TRADE_CONFIG['amount'] / TRADE_CONFIG['leverage']
-                operation_type = "平多开空"
-            elif not current_position:
-                # 开空仓：需要保证金
-                required_margin = price_data['price'] * TRADE_CONFIG['amount'] / TRADE_CONFIG['leverage']
-                operation_type = "开空仓"
-            else:
-                # 已持有空仓：不需要额外保证金
-                required_margin = 0
-                operation_type = "保持空仓"
+        # 从信号中获取交易参数
+        position_size_percent = signal_data.get('position_size_percent', 10)  # 默认10%
+        leverage = signal_data.get('leverage', 10)  # 默认10倍杠杆
+        action = signal_data.get('action', 'HOLD')
 
-        elif signal_data['signal'] == 'HOLD':
-            print("建议观望，不执行交易")
+        # 计算实际交易金额（USDT）
+        position_size_usdt = usdt_balance * (position_size_percent / 100)
+        
+        # 计算需要的保证金
+        required_margin = position_size_usdt / leverage
+
+        # 根据动作类型执行不同的交易逻辑
+        if action == 'HOLD' or signal_data['signal'] == 'HOLD':
+            print(f"{symbol} 建议观望，不执行交易")
             return
 
-        print(f"操作类型: {operation_type}, 需要保证金: {required_margin:.2f} USDT")
+        # 计算交易数量（以基础货币为单位）
+        if signal_data['signal'] in ['BUY', 'SELL']:
+            trade_amount_base = position_size_usdt / price_data['price']
+            
+            print(f"{symbol} 仓位大小: {position_size_percent}% ({position_size_usdt:.2f} USDT)")
+            print(f"{symbol} 杠杆倍数: {leverage}x")
+            print(f"{symbol} 计算得出的交易数量({config['base_currency']}): {trade_amount_base:.6f}")
+            print(f"{symbol} 需要保证金: {required_margin:.2f} USDT")
 
-        # 只有在需要额外保证金时才检查
-        if required_margin > 0:
+            # 检查保证金是否足够
             if required_margin > usdt_balance * 0.8:
-                print(f"⚠️ 保证金不足，跳过交易。需要: {required_margin:.2f} USDT, 可用: {usdt_balance:.2f} USDT")
+                print(f"{symbol} ⚠️ 保证金不足，跳过交易。需要: {required_margin:.2f} USDT, 可用: {usdt_balance:.2f} USDT")
                 return
-        else:
-            print("✅ 无需额外保证金，继续执行")
 
-        # 执行交易逻辑
-        if signal_data['signal'] == 'BUY':
-            if current_position and current_position['side'] == 'short':
-                print("平空仓并开多仓...")
-                # 平空仓
-                exchange.create_market_order(
-                    TRADE_CONFIG['symbol'],
-                    'buy',
-                    current_position['size'],
-                    params={'reduceOnly': True}
-                )
-                time.sleep(1)
-                # 开多仓
-                exchange.create_market_order(
-                    TRADE_CONFIG['symbol'],
-                    'buy',
-                    TRADE_CONFIG['amount']
-                )
-            elif current_position and current_position['side'] == 'long':
-                print("已有多头持仓，保持现状")
-            else:
-                # 无持仓时开多仓
-                print("开多仓...")
-                exchange.create_market_order(
-                    TRADE_CONFIG['symbol'],
-                    'buy',
-                    TRADE_CONFIG['amount']
-                )
+            print(f"{symbol} ✅ 保证金充足，继续执行")
 
-        elif signal_data['signal'] == 'SELL':
-            if current_position and current_position['side'] == 'long':
-                print("平多仓并开空仓...")
-                # 平多仓
-                exchange.create_market_order(
-                    TRADE_CONFIG['symbol'],
-                    'sell',
-                    current_position['size'],
-                    params={'reduceOnly': True}
-                )
-                time.sleep(1)
-                # 开空仓
-                exchange.create_market_order(
-                    TRADE_CONFIG['symbol'],
-                    'sell',
-                    TRADE_CONFIG['amount']
-                )
-            elif current_position and current_position['side'] == 'short':
-                print("已有空头持仓，保持现状")
-            else:
-                # 无持仓时开空仓
-                print("开空仓...")
-                exchange.create_market_order(
-                    TRADE_CONFIG['symbol'],
-                    'sell',
-                    TRADE_CONFIG['amount']
-                )
+            # 设置杠杆
+            exchange.set_leverage(leverage, config['symbol'])
+            print(f"{symbol} 设置杠杆倍数: {leverage}x")
 
-        print("订单执行成功")
+            # 执行交易逻辑
+            if signal_data['signal'] == 'BUY':
+                if current_position and current_position['side'] == 'short':
+                    print(f"{symbol} 平空仓并开多仓...")
+                    # 平空仓
+                    exchange.create_market_order(
+                        config['symbol'],
+                        'buy',
+                        current_position['size'],
+                        params={'reduceOnly': True}
+                    )
+                    time.sleep(1)
+                    # 开多仓
+                    exchange.create_market_order(
+                        config['symbol'],
+                        'buy',
+                        trade_amount_base
+                    )
+                elif current_position and current_position['side'] == 'long':
+                    if action == 'INCREASE':
+                        print(f"{symbol} 增加多仓...")
+                        exchange.create_market_order(
+                            config['symbol'],
+                            'buy',
+                            trade_amount_base
+                        )
+                    else:
+                        print(f"{symbol} 已有多头持仓，保持现状")
+                else:
+                    # 无持仓时开多仓
+                    print(f"{symbol} 开多仓...")
+                    exchange.create_market_order(
+                        config['symbol'],
+                        'buy',
+                        trade_amount_base
+                    )
+
+            elif signal_data['signal'] == 'SELL':
+                if current_position and current_position['side'] == 'long':
+                    print(f"{symbol} 平多仓并开空仓...")
+                    # 平多仓
+                    exchange.create_market_order(
+                        config['symbol'],
+                        'sell',
+                        current_position['size'],
+                        params={'reduceOnly': True}
+                    )
+                    time.sleep(1)
+                    # 开空仓
+                    exchange.create_market_order(
+                        config['symbol'],
+                        'sell',
+                        trade_amount_base
+                    )
+                elif current_position and current_position['side'] == 'short':
+                    if action == 'INCREASE':
+                        print(f"{symbol} 增加空仓...")
+                        exchange.create_market_order(
+                            config['symbol'],
+                            'sell',
+                            trade_amount_base
+                        )
+                    else:
+                        print(f"{symbol} 已有空头持仓，保持现状")
+                else:
+                    # 无持仓时开空仓
+                    print(f"{symbol} 开空仓...")
+                    exchange.create_market_order(
+                        config['symbol'],
+                        'sell',
+                        trade_amount_base
+                    )
+
+        print(f"{symbol} 订单执行成功")
         time.sleep(2)
-        position = get_current_position()
-        print(f"更新后持仓: {position}")
+        position = get_current_position(symbol)
+        print(f"{symbol} 更新后持仓: {position}")
 
     except Exception as e:
-        print(f"订单执行失败: {e}")
+        print(f"{symbol} 订单执行失败: {e}")
         import traceback
         traceback.print_exc()
 
-def trading_bot():
-    """主交易机器人函数"""
-    print("\n" + "=" * 60)
-    print(f"执行时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print("=" * 60)
-
-    # 1. 获取增强版K线数据
-    price_data = get_btc_ohlcv_enhanced()
-    if not price_data:
+def trading_bot_for_symbol(symbol, all_symbols_info=None, balance=None, usdt_balance=0):
+    """为单个交易对执行交易逻辑（支持多币种综合分析）"""
+    config = TRADE_CONFIGS[symbol]
+    
+    if not config['enabled']:
+        print(f"{symbol} 交易对已禁用，跳过")
         return
-
-    print(f"BTC当前价格: ${price_data['price']:,.2f}")
-    print(f"数据周期: {TRADE_CONFIG['timeframe']}")
-    print(f"价格变化: {price_data['price_change']:+.2f}%")
-
+    
+    print(f"\n{'='*20} {symbol} {'='*20}")
+    print(f"执行时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"{'='*50}")
+    
+    # 1. 获取增强版K线数据
+    price_data = get_ohlcv_enhanced(symbol)
+    if not price_data:
+        print(f"{symbol} 获取价格数据失败，跳过")
+        return
+    
+    print(f"{symbol} 当前价格: ${price_data['price']:,.2f}")
+    print(f"{symbol} 数据周期: {GLOBAL_CONFIG['timeframe']}")
+    print(f"{symbol} 价格变化: {price_data['price_change']:+.2f}%")
+    
     # 2. 保存价格数据到数据库
-    save_price_data(price_data)
-
+    save_price_data(price_data, symbol)
+    
     # 3. 获取当前持仓并保存到数据库
-    current_position = get_current_position()
-    save_position_record(current_position)
-
-    # 4. 使用DeepSeek分析（带重试）
-    signal_data = analyze_with_deepseek_with_retry(price_data)
-
+    current_position = get_current_position(symbol)
+    save_position_record(current_position, symbol)
+    
+    # 4. 使用DeepSeek多币种综合分析（带重试）
+    signal_data = analyze_with_deepseek_with_retry(price_data, symbol, all_symbols_info)
+    
     if signal_data.get('is_fallback', False):
-        print("⚠️ 使用备用交易信号")
-
+        print(f"{symbol} ⚠️ 使用备用交易信号")
+    
     # 5. 执行交易
-    execute_trade(signal_data, price_data)
+    execute_trade(signal_data, price_data, symbol)
     
     # 6. 更新交易统计
     if signal_data['signal'] in ['BUY', 'SELL']:
@@ -1095,17 +1459,44 @@ def trading_bot():
         update_trading_stats()
 
 
+def trading_bot():
+    """主交易机器人函数 - 处理所有启用的交易对（多币种综合分析）"""
+    print("\n" + "=" * 60)
+    print(f"多交易对交易机器人执行时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print("=" * 60)
+    
+    # 获取所有币种的综合数据（一次获取，多次使用）
+    print("正在获取所有币种的综合数据...")
+    all_symbols_info = get_all_symbols_data()
+    
+    # 显示账户总览
+    account_info = all_symbols_info['account_info']
+    print(f"账户总览:")
+    print(f"  总余额: {account_info['total_balance']:.2f} USDT")
+    print(f"  可用余额: {account_info['free_balance']:.2f} USDT")
+    print(f"  总敞口: {account_info['total_exposure']:.2f} USDT")
+    print(f"  保证金使用: {account_info['total_margin_used']:.2f} USDT ({account_info['margin_usage_percent']:.1f}%)")
+    print(f"  敞口/余额比: {account_info['exposure_to_balance_ratio']:.2f}")
+    
+    # 遍历所有启用的交易对
+    for symbol in enabled_symbols:
+        trading_bot_for_symbol(symbol, all_symbols_info)
+        # 在处理不同交易对之间添加短暂延迟，避免API限制
+        time.sleep(1)
+
+
 def main():
     """主函数"""
-    print("BTC/USDT 币安自动交易机器人启动成功！")
+    print("多交易对币安自动交易机器人启动成功！")
+    print(f"启用的交易对: {', '.join(enabled_symbols)}")
     print("融合技术指标策略 + 币安实盘接口 + SQLite数据库存储")
 
-    if TRADE_CONFIG['test_mode']:
+    if GLOBAL_CONFIG['test_mode']:
         print("当前为模拟模式，不会真实下单")
     else:
         print("实盘交易模式，请谨慎操作！")
 
-    print(f"交易周期: {TRADE_CONFIG['timeframe']}")
+    print(f"交易周期: {GLOBAL_CONFIG['timeframe']}")
     print("已启用完整技术指标分析、持仓跟踪功能和历史数据存储")
 
     # 初始化数据库
@@ -1124,19 +1515,14 @@ def main():
     else:
         print(f"使用历史启动时间: {trading_stats['start_time']}")
 
-    # 设置交易所
-    if not setup_exchange():
-        print("交易所初始化失败，程序退出")
-        return
-
     # 根据时间周期设置执行频率
-    if TRADE_CONFIG['timeframe'] == '1h':
+    if GLOBAL_CONFIG['timeframe'] == '1h':
         schedule.every().hour.at(":01").do(trading_bot)
         print("执行频率: 每小时一次")
-    elif TRADE_CONFIG['timeframe'] == '15m':
+    elif GLOBAL_CONFIG['timeframe'] == '15m':
         schedule.every(15).minutes.do(trading_bot)
         print("执行频率: 每15分钟一次")
-    elif TRADE_CONFIG['timeframe'] == '5m':
+    elif GLOBAL_CONFIG['timeframe'] == '5m':
         schedule.every(5).minutes.do(trading_bot)
         print("执行频率: 每5分钟一次")
     else:
