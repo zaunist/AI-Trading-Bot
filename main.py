@@ -11,6 +11,7 @@ import sys
 import time
 import threading
 from dotenv import load_dotenv
+from thread_logger import log_main, log_spot, log_futures, spot_print, futures_print, main_print
 
 # 添加当前目录到Python路径
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -43,20 +44,20 @@ if enable_futures:
             missing_vars.append(f"{var} (合约交易所需)")
 
 if missing_vars:
-    print("错误: 缺少以下必要的环境变量:")
+    main_print("错误: 缺少以下必要的环境变量:")
     for var in missing_vars:
-        print(f"  - {var}")
-    print("\n请检查 .env 文件配置")
+        main_print(f"  - {var}")
+    main_print("\n请检查 .env 文件配置")
     sys.exit(1)
 
 def run_spot_trading():
     """运行现货交易机器人"""
     try:
         from spot_trading import spot_main
-        print("启动现货交易机器人...")
+        spot_print("启动现货交易机器人...")
         spot_main()
     except Exception as e:
-        print(f"现货交易机器人启动失败: {e}")
+        spot_print(f"现货交易机器人启动失败: {e}")
         import traceback
         traceback.print_exc()
 
@@ -64,26 +65,26 @@ def run_futures_trading():
     """运行合约交易机器人"""
     try:
         from futures_trading import futures_main
-        print("启动合约交易机器人...")
+        futures_print("启动合约交易机器人...")
         futures_main()
     except Exception as e:
-        print(f"合约交易机器人启动失败: {e}")
+        futures_print(f"合约交易机器人启动失败: {e}")
         import traceback
         traceback.print_exc()
 
 
 def main():
     """主函数 - 统一管理现货和合约交易"""
-    print("=" * 60)
-    print("统一交易机器人启动")
-    print("=" * 60)
+    main_print("=" * 60)
+    main_print("统一交易机器人启动")
+    main_print("=" * 60)
     
     # 获取环境变量配置
     enable_spot = os.getenv('ENABLE_SPOT_TRADING', 'true').lower() == 'true'
     enable_futures = os.getenv('ENABLE_FUTURES_TRADING', 'true').lower() == 'true'
     
-    print(f"现货交易启用: {enable_spot}")
-    print(f"合约交易启用: {enable_futures}")
+    main_print(f"现货交易启用: {enable_spot}")
+    main_print(f"合约交易启用: {enable_futures}")
     
     threads = []
     
@@ -93,7 +94,7 @@ def main():
         spot_thread.daemon = True
         spot_thread.start()
         threads.append(spot_thread)
-        print("现货交易线程已启动")
+        spot_print("现货交易线程已启动")
     
     # 启动合约交易线程
     if enable_futures:
@@ -101,28 +102,28 @@ def main():
         futures_thread.daemon = True
         futures_thread.start()
         threads.append(futures_thread)
-        print("合约交易线程已启动")
+        futures_print("合约交易线程已启动")
     
     if not threads:
-        print("未启用任何交易模式，请检查环境变量配置")
+        main_print("未启用任何交易模式，请检查环境变量配置")
         return
     
-    print(f"总共启动了 {len(threads)} 个交易线程")
-    print("按 Ctrl+C 停止所有交易机器人")
+    main_print(f"总共启动了 {len(threads)} 个交易线程")
+    main_print("按 Ctrl+C 停止所有交易机器人")
     
     try:
         # 保持主线程运行
         while True:
             time.sleep(1)
     except KeyboardInterrupt:
-        print("\n接收到停止信号，正在关闭所有交易机器人...")
+        main_print("\n接收到停止信号，正在关闭所有交易机器人...")
         # 等待所有线程结束
         for thread in threads:
             if thread.is_alive():
                 thread.join(timeout=5)  # 等待最多5秒
-        print("所有交易机器人已关闭")
+        main_print("所有交易机器人已关闭")
     except Exception as e:
-        print(f"主程序运行异常: {e}")
+        main_print(f"主程序运行异常: {e}")
         import traceback
         traceback.print_exc()
 

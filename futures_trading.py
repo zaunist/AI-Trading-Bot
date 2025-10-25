@@ -10,6 +10,7 @@ import re
 import sqlite3
 import threading
 from dotenv import load_dotenv
+from thread_logger import log_futures, log_futures_warning, log_futures_error, futures_print
 
 load_dotenv()
 
@@ -105,7 +106,7 @@ def init_database():
                 columns = [column[1] for column in cursor.fetchall()]
                 if 'symbol' not in columns:
                     cursor.execute("ALTER TABLE price_data ADD COLUMN symbol TEXT")
-                    print("为price_data表添加symbol字段")
+                    futures_print("为price_data表添加symbol字段")
             except:
                 pass
             
@@ -115,7 +116,7 @@ def init_database():
                 columns = [column[1] for column in cursor.fetchall()]
                 if 'symbol' not in columns:
                     cursor.execute("ALTER TABLE trading_signals ADD COLUMN symbol TEXT")
-                    print("为trading_signals表添加symbol字段")
+                    futures_print("为trading_signals表添加symbol字段")
             except:
                 pass
             
@@ -125,7 +126,7 @@ def init_database():
                 columns = [column[1] for column in cursor.fetchall()]
                 if 'symbol' not in columns:
                     cursor.execute("ALTER TABLE position_records ADD COLUMN symbol TEXT")
-                    print("为position_records表添加symbol字段")
+                    futures_print("为position_records表添加symbol字段")
             except:
                 pass
             
@@ -135,7 +136,7 @@ def init_database():
                 columns = [column[1] for column in cursor.fetchall()]
                 if 'symbol' not in columns:
                     cursor.execute("ALTER TABLE technical_indicators ADD COLUMN symbol TEXT")
-                    print("为technical_indicators表添加symbol字段")
+                    futures_print("为technical_indicators表添加symbol字段")
             except:
                 pass
             
@@ -242,11 +243,11 @@ def init_database():
                 ''', (datetime.now().strftime('%Y-%m-%d %H:%M:%S'),))
             
             db_connection.commit()
-            print("数据库初始化成功")
+            futures_print("数据库初始化成功")
             return True
             
     except Exception as e:
-        print(f"数据库初始化失败: {e}")
+        log_futures_error(f"数据库初始化失败: {e}")
         import traceback
         traceback.print_exc()
         return False
@@ -291,7 +292,7 @@ def save_price_data(price_data, symbol):
             db_connection.commit()
             
     except Exception as e:
-        print(f"保存价格数据失败: {e}")
+        log_futures_warning(f"保存价格数据失败: {e}")
 
 
 def save_trading_signal(signal_data, price_data, symbol):
@@ -320,7 +321,7 @@ def save_trading_signal(signal_data, price_data, symbol):
             db_connection.commit()
             
     except Exception as e:
-        print(f"保存交易信号失败: {e}")
+        log_futures_warning(f"保存交易信号失败: {e}")
 
 
 def save_position_record(position_data, symbol):
@@ -358,7 +359,7 @@ def save_position_record(position_data, symbol):
             db_connection.commit()
             
     except Exception as e:
-        print(f"保存持仓记录失败: {e}")
+        log_futures_warning(f"保存持仓记录失败: {e}")
 
 
 def update_trading_stats():
@@ -384,7 +385,7 @@ def update_trading_stats():
             db_connection.commit()
             
     except Exception as e:
-        print(f"更新交易统计失败: {e}")
+        log_futures_warning(f"更新交易统计失败: {e}")
 
 
 def load_trading_stats():
@@ -403,9 +404,9 @@ def load_trading_stats():
                 trading_stats['successful_trades'] = result[4]
                 trading_stats['total_pnl'] = result[5]
                 trading_stats['last_signal_time'] = result[6]
-                print(f"已加载历史统计数据: 启动时间 {result[1]}, 总调用次数 {result[2]}")
+                futures_print(f"已加载历史统计数据: 启动时间 {result[1]}, 总调用次数 {result[2]}")
             else:
-                print("未找到历史统计数据，使用默认值")
+                futures_print("未找到历史统计数据，使用默认值")
             
     except Exception as e:
         print(f"加载交易统计失败: {e}")
@@ -428,7 +429,7 @@ def get_historical_price_data(symbol, limit=100):
             return results
             
     except Exception as e:
-        print(f"获取历史价格数据失败: {e}")
+        log_futures_warning(f"获取历史价格数据失败: {e}")
         return []
 
 
@@ -450,7 +451,7 @@ def get_historical_signals(symbol, limit=30):
             return results
             
     except Exception as e:
-        print(f"获取历史交易信号失败: {e}")
+        log_futures_warning(f"获取历史交易信号失败: {e}")
         return []
 
 def calculate_technical_indicators(df):
@@ -525,7 +526,7 @@ def calculate_technical_indicators(df):
 
         return df
     except Exception as e:
-        print(f"技术指标计算失败: {e}")
+        log_futures_warning(f"技术指标计算失败: {e}")
         return df
 
 def get_multi_timeframe_data(symbol):
@@ -577,13 +578,13 @@ def get_multi_timeframe_data(symbol):
                 }
                 
             except Exception as e:
-                print(f"获取 {symbol} {timeframe} 数据失败: {e}")
+                log_futures_warning(f"获取 {symbol} {timeframe} 数据失败: {e}")
                 continue
                 
         return timeframe_data
         
     except Exception as e:
-        print(f"获取 {symbol} 多时间周期数据失败: {e}")
+        log_futures_error(f"获取 {symbol} 多时间周期数据失败: {e}")
         return {}
 
 
@@ -661,7 +662,7 @@ def get_ohlcv_enhanced(symbol):
             'full_data': df
         }
     except Exception as e:
-        print(f"获取 {symbol} 增强K线数据失败: {e}")
+        log_futures_error(f"获取 {symbol} 增强K线数据失败: {e}")
         return None
 
 
@@ -678,8 +679,8 @@ def safe_json_parse(json_str):
             json_str = re.sub(r',\s*]', ']', json_str)
             return json.loads(json_str)
         except json.JSONDecodeError as e:
-            print(f"JSON解析失败，原始内容: {json_str}")
-            print(f"错误详情: {e}")
+            log_futures_error(f"JSON解析失败，原始内容: {json_str}")
+            log_futures_error(f"错误详情: {e}")
             return None
 
 
@@ -723,7 +724,7 @@ def get_current_position(symbol):
                     else:
                         position_amt = contracts
 
-                print(f"{symbol} 调试 - 持仓量: {position_amt}")
+                futures_print(f"{symbol} 调试 - 持仓量: {position_amt}")
 
                 if position_amt != 0:  # 有持仓
                     side = 'long' if position_amt > 0 else 'short'
@@ -736,11 +737,11 @@ def get_current_position(symbol):
                         'symbol': pos['symbol']  # 返回实际的symbol用于调试
                     }
 
-        print(f"{symbol} 调试 - 未找到有效持仓")
+        futures_print(f"{symbol} 调试 - 未找到有效持仓")
         return None
 
     except Exception as e:
-        print(f"获取 {symbol} 持仓失败: {e}")
+        log_futures_error(f"获取 {symbol} 持仓失败: {e}")
         import traceback
         traceback.print_exc()
         return None
@@ -754,14 +755,14 @@ def get_funding_and_open_interest(symbol):
         current_funding_rate = funding_rate.get('fundingRate', 0)
         funding_timestamp = funding_rate.get('timestamp', 0)
 
-        print(f"{symbol} 调试 - 当前资金费率: {current_funding_rate}, 时间戳: {funding_timestamp}")
+        futures_print(f"{symbol} 调试 - 当前资金费率: {current_funding_rate}, 时间戳: {funding_timestamp}")
         
         # 获取未平合约数据
         open_interest = exchange.fetch_open_interest(f'{symbol}:USDT')
         current_open_interest = open_interest.get('openInterestAmount', 0)
         oi_timestamp = open_interest.get('timestamp', 0)
 
-        print(f"{symbol} 调试 - 当前未平合约: {current_open_interest}, 时间戳: {oi_timestamp}")
+        futures_print(f"{symbol} 调试 - 当前未平合约: {current_open_interest}, 时间戳: {oi_timestamp}")
         
         # 获取历史资金费率来计算平均值
         try:
@@ -796,7 +797,7 @@ def get_funding_and_open_interest(symbol):
         }
         
     except Exception as e:
-        print(f"获取 {symbol} 资金费率和未平合约数据失败: {e}")
+        log_futures_warning(f"获取 {symbol} 资金费率和未平合约数据失败: {e}")
         # 返回默认值
         return {
             'current_funding_rate': 1.25e-05,
@@ -851,7 +852,7 @@ def get_all_symbols_data():
                 total_margin_used += estimated_margin
                 
         except Exception as e:
-            print(f"获取 {symbol} 数据失败: {e}")
+            log_futures_warning(f"获取 {symbol} 数据失败: {e}")
             continue
     
     return {
@@ -978,7 +979,7 @@ def generate_enhanced_prompt(price_data, symbol, all_symbols_info=None):
             sharpe_ratio = returns.mean() / returns.std() * (252 ** 0.5) if returns.std() != 0 else 0
             
         except Exception as e:
-            print(f"获取 {symbol} 长周期数据失败: {e}")
+            log_futures_warning(f"获取 {symbol} 长周期数据失败: {e}")
             longer_ema_20 = 0
             longer_ema_50 = 0
             atr_3 = 0
@@ -1149,9 +1150,9 @@ def analyze_with_deepseek(price_data, symbol, all_symbols_info=None):
     # 生成多币种综合分析提示词
     prompt = generate_enhanced_prompt(price_data, symbol, all_symbols_info)
 
-    print(f"{symbol} DeepSeek多币种综合分析提示词生成完毕，准备请求DeepSeek API...")
-    print(f"{symbol} 提示词长度: {len(prompt)} 字符")
-    print(f"{symbol} 完整提示词:\n{prompt}")
+    futures_print(f"{symbol} DeepSeek多币种综合分析提示词生成完毕，准备请求DeepSeek API...")
+    futures_print(f"{symbol} 提示词长度: {len(prompt)} 字符")
+    futures_print(f"{symbol} 完整提示词:\n{prompt}\n")
 
     try:
         response = deepseek_client.chat.completions.create(
@@ -1214,25 +1215,25 @@ def analyze_with_deepseek(price_data, symbol, all_symbols_info=None):
         symbol_signals = signal_history.get(symbol, [])
         signal_count = len([s for s in symbol_signals if s.get('signal') == signal_data['signal']])
         total_signals = len(symbol_signals)
-        print(f"{symbol} 信号统计: {signal_data['signal']} (最近{total_signals}次中出现{signal_count}次)")
+        futures_print(f"{symbol} 信号统计: {signal_data['signal']} (最近{total_signals}次中出现{signal_count}次)")
 
         # 信号连续性检查（按交易对分别检查）
         if len(symbol_signals) >= 3:
             last_three = [s['signal'] for s in symbol_signals[-3:]]
             if len(set(last_three)) == 1:
-                print(f"{symbol} ⚠️ 注意：连续3次{signal_data['signal']}信号")
+                log_futures_warning(f"{symbol} ⚠️ 注意：连续3次{signal_data['signal']}信号")
 
         # 打印多币种分析结果
-        print(f"{symbol} 多币种综合分析结果:")
-        print(f"  信号: {signal_data['signal']}")
-        print(f"  仓位: {signal_data['position_size_percent']}%")
-        print(f"  杠杆: {signal_data['leverage']}x")
-        print(f"  风险评估: {signal_data.get('risk_assessment', 'N/A')}")
+        futures_print(f"{symbol} 多币种综合分析结果:")
+        futures_print(f"  信号: {signal_data['signal']}")
+        futures_print(f"  仓位: {signal_data['position_size_percent']}%")
+        futures_print(f"  杠杆: {signal_data['leverage']}x")
+        futures_print(f"  风险评估: {signal_data.get('risk_assessment', 'N/A')}")
 
         return signal_data
 
     except Exception as e:
-        print(f"{symbol} DeepSeek多币种分析失败: {e}")
+        log_futures_error(f"{symbol} DeepSeek多币种分析失败: {e}")
         return create_fallback_signal(price_data)
 
 
@@ -1244,11 +1245,11 @@ def analyze_with_deepseek_with_retry(price_data, symbol, all_symbols_info=None, 
             if signal_data and not signal_data.get('is_fallback', False):
                 return signal_data
 
-            print(f"{symbol} 第{attempt + 1}次尝试失败，进行重试...")
+            futures_print(f"{symbol} 第{attempt + 1}次尝试失败，进行重试...")
             time.sleep(1)
 
         except Exception as e:
-            print(f"{symbol} 第{attempt + 1}次尝试异常: {e}")
+            log_futures_error(f"{symbol} 第{attempt + 1}次尝试异常: {e}")
             if attempt == max_retries - 1:
                 return create_fallback_signal(price_data)
             time.sleep(1)
@@ -1261,20 +1262,20 @@ def execute_trade(signal_data, price_data, symbol):
     config = TRADE_CONFIGS[symbol]
     current_position = get_current_position(symbol)
 
-    print(f"{symbol} 交易信号: {signal_data['signal']}")
-    print(f"{symbol} 信心程度: {signal_data['confidence']}")
-    print(f"{symbol} 理由: {signal_data['reason']}")
-    print(f"{symbol} 止损: ${signal_data['stop_loss']:,.2f}")
-    print(f"{symbol} 止盈: ${signal_data['take_profit']:,.2f}")
-    print(f"{symbol} 当前持仓: {current_position}")
+    futures_print(f"{symbol} 交易信号: {signal_data['signal']}")
+    futures_print(f"{symbol} 信心程度: {signal_data['confidence']}")
+    futures_print(f"{symbol} 理由: {signal_data['reason']}")
+    futures_print(f"{symbol} 止损: ${signal_data['stop_loss']:,.2f}")
+    futures_print(f"{symbol} 止盈: ${signal_data['take_profit']:,.2f}")
+    futures_print(f"{symbol} 当前持仓: {current_position}")
 
     # 风险管理：低信心信号不执行
     if signal_data['confidence'] == 'LOW' and not GLOBAL_CONFIG['test_mode']:
-        print(f"{symbol} ⚠️ 低信心信号，跳过执行")
+        log_futures_warning(f"{symbol} ⚠️ 低信心信号，跳过执行")
         return
 
     if GLOBAL_CONFIG['test_mode']:
-        print(f"{symbol} 测试模式 - 仅模拟交易")
+        futures_print(f"{symbol} 测试模式 - 仅模拟交易")
         return
 
     try:
@@ -1286,13 +1287,13 @@ def execute_trade(signal_data, price_data, symbol):
             if isinstance(usdt_balance, (int, float)):
                 # 确保是数字类型
                 usdt_balance = float(usdt_balance)
-                print(f"{symbol} 可用USDT余额: {usdt_balance:.2f} USDT")
+                futures_print(f"{symbol} 可用USDT余额: {usdt_balance:.2f} USDT")
             else:
-                print(f"{symbol} 警告 - USDT余额不是数字类型: {usdt_balance}")
+                log_futures_warning(f"{symbol} 警告 - USDT余额不是数字类型: {usdt_balance}")
                 usdt_balance = 0  # 如果不是数字，设为0
         else:
-            print(f"{symbol} 未找到USDT余额信息")
-            print(f"{symbol} 可用余额类型: {list(balance.keys())}")
+            futures_print(f"{symbol} 未找到USDT余额信息")
+            futures_print(f"{symbol} 可用余额类型: {list(balance.keys())}")
             usdt_balance = 0
 
         # 从信号中获取交易参数
@@ -1315,26 +1316,26 @@ def execute_trade(signal_data, price_data, symbol):
         if signal_data['signal'] in ['BUY', 'SELL']:
             trade_amount_base = position_size_usdt / price_data['price']
             
-            print(f"{symbol} 仓位大小: {position_size_percent}% ({position_size_usdt:.2f} USDT)")
-            print(f"{symbol} 杠杆倍数: {leverage}x")
-            print(f"{symbol} 计算得出的交易数量({config['base_currency']}): {trade_amount_base:.6f}")
-            print(f"{symbol} 需要保证金: {required_margin:.2f} USDT")
+            futures_print(f"{symbol} 仓位大小: {position_size_percent}% ({position_size_usdt:.2f} USDT)")
+            futures_print(f"{symbol} 杠杆倍数: {leverage}x")
+            futures_print(f"{symbol} 计算得出的交易数量({config['base_currency']}): {trade_amount_base:.6f}")
+            futures_print(f"{symbol} 需要保证金: {required_margin:.2f} USDT")
 
             # 检查保证金是否足够
             if required_margin > usdt_balance * 0.8:
-                print(f"{symbol} ⚠️ 保证金不足，跳过交易。需要: {required_margin:.2f} USDT, 可用: {usdt_balance:.2f} USDT")
+                log_futures_warning(f"{symbol} ⚠️ 保证金不足，跳过交易。需要: {required_margin:.2f} USDT, 可用: {usdt_balance:.2f} USDT")
                 return
 
-            print(f"{symbol} ✅ 保证金充足，继续执行")
+            futures_print(f"{symbol} ✅ 保证金充足，继续执行")
 
             # 设置杠杆
             exchange.set_leverage(leverage, config['symbol'])
-            print(f"{symbol} 设置杠杆倍数: {leverage}x")
+            futures_print(f"{symbol} 设置杠杆倍数: {leverage}x")
 
             # 执行交易逻辑
             if signal_data['signal'] == 'BUY':
                 if current_position and current_position['side'] == 'short':
-                    print(f"{symbol} 平空仓并开多仓...")
+                    futures_print(f"{symbol} 平空仓并开多仓...")
                     # 平空仓
                     exchange.create_market_order(
                         config['symbol'],
@@ -1351,17 +1352,17 @@ def execute_trade(signal_data, price_data, symbol):
                     )
                 elif current_position and current_position['side'] == 'long':
                     if action == 'INCREASE':
-                        print(f"{symbol} 增加多仓...")
+                        futures_print(f"{symbol} 增加多仓...")
                         exchange.create_market_order(
                             config['symbol'],
                             'buy',
                             trade_amount_base
                         )
                     else:
-                        print(f"{symbol} 已有多头持仓，保持现状")
+                        futures_print(f"{symbol} 已有多头持仓，保持现状")
                 else:
                     # 无持仓时开多仓
-                    print(f"{symbol} 开多仓...")
+                    futures_print(f"{symbol} 开多仓...")
                     exchange.create_market_order(
                         config['symbol'],
                         'buy',
@@ -1370,7 +1371,7 @@ def execute_trade(signal_data, price_data, symbol):
 
             elif signal_data['signal'] == 'SELL':
                 if current_position and current_position['side'] == 'long':
-                    print(f"{symbol} 平多仓并开空仓...")
+                    futures_print(f"{symbol} 平多仓并开空仓...")
                     # 平多仓
                     exchange.create_market_order(
                         config['symbol'],
@@ -1387,30 +1388,30 @@ def execute_trade(signal_data, price_data, symbol):
                     )
                 elif current_position and current_position['side'] == 'short':
                     if action == 'INCREASE':
-                        print(f"{symbol} 增加空仓...")
+                        futures_print(f"{symbol} 增加空仓...")
                         exchange.create_market_order(
                             config['symbol'],
                             'sell',
                             trade_amount_base
                         )
                     else:
-                        print(f"{symbol} 已有空头持仓，保持现状")
+                        futures_print(f"{symbol} 已有空头持仓，保持现状")
                 else:
                     # 无持仓时开空仓
-                    print(f"{symbol} 开空仓...")
+                    futures_print(f"{symbol} 开空仓...")
                     exchange.create_market_order(
                         config['symbol'],
                         'sell',
                         trade_amount_base
                     )
 
-        print(f"{symbol} 订单执行成功")
+        futures_print(f"{symbol} 订单执行成功")
         time.sleep(2)
         position = get_current_position(symbol)
-        print(f"{symbol} 更新后持仓: {position}")
+        futures_print(f"{symbol} 更新后持仓: {position}")
 
     except Exception as e:
-        print(f"{symbol} 订单执行失败: {e}")
+        log_futures_error(f"{symbol} 订单执行失败: {e}")
         import traceback
         traceback.print_exc()
 
@@ -1419,22 +1420,22 @@ def trading_bot_for_symbol(symbol, all_symbols_info=None, balance=None, usdt_bal
     config = TRADE_CONFIGS[symbol]
     
     if not config['enabled']:
-        print(f"{symbol} 交易对已禁用，跳过")
+        futures_print(f"{symbol} 交易对已禁用，跳过")
         return
     
-    print(f"\n{'='*20} {symbol} {'='*20}")
-    print(f"执行时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"{'='*50}")
+    futures_print(f"\n{'='*20} {symbol} {'='*20}")
+    futures_print(f"执行时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    futures_print(f"{'='*50}")
     
     # 1. 获取增强版K线数据
     price_data = get_ohlcv_enhanced(symbol)
     if not price_data:
-        print(f"{symbol} 获取价格数据失败，跳过")
+        log_futures_warning(f"{symbol} 获取价格数据失败，跳过")
         return
     
-    print(f"{symbol} 当前价格: ${price_data['price']:,.2f}")
-    print(f"{symbol} 数据周期: {GLOBAL_CONFIG['timeframe']}")
-    print(f"{symbol} 价格变化: {price_data['price_change']:+.2f}%")
+    futures_print(f"{symbol} 当前价格: ${price_data['price']:,.2f}")
+    futures_print(f"{symbol} 数据周期: {GLOBAL_CONFIG['timeframe']}")
+    futures_print(f"{symbol} 价格变化: {price_data['price_change']:+.2f}%")
     
     # 2. 保存价格数据到数据库
     save_price_data(price_data, symbol)
@@ -1447,7 +1448,7 @@ def trading_bot_for_symbol(symbol, all_symbols_info=None, balance=None, usdt_bal
     signal_data = analyze_with_deepseek_with_retry(price_data, symbol, all_symbols_info)
     
     if signal_data.get('is_fallback', False):
-        print(f"{symbol} ⚠️ 使用备用交易信号")
+        log_futures_warning(f"{symbol} ⚠️ 使用备用交易信号")
     
     # 5. 执行交易
     execute_trade(signal_data, price_data, symbol)
@@ -1461,22 +1462,22 @@ def trading_bot_for_symbol(symbol, all_symbols_info=None, balance=None, usdt_bal
 
 def trading_bot():
     """主交易机器人函数 - 处理所有启用的交易对（多币种综合分析）"""
-    print("\n" + "=" * 60)
-    print(f"多交易对交易机器人执行时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print("=" * 60)
+    futures_print("\n" + "=" * 60)
+    futures_print(f"多交易对交易机器人执行时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    futures_print("=" * 60)
     
     # 获取所有币种的综合数据（一次获取，多次使用）
-    print("正在获取所有币种的综合数据...")
+    futures_print("正在获取所有币种的综合数据...")
     all_symbols_info = get_all_symbols_data()
     
     # 显示账户总览
     account_info = all_symbols_info['account_info']
-    print(f"账户总览:")
-    print(f"  总余额: {account_info['total_balance']:.2f} USDT")
-    print(f"  可用余额: {account_info['free_balance']:.2f} USDT")
-    print(f"  总敞口: {account_info['total_exposure']:.2f} USDT")
-    print(f"  保证金使用: {account_info['total_margin_used']:.2f} USDT ({account_info['margin_usage_percent']:.1f}%)")
-    print(f"  敞口/余额比: {account_info['exposure_to_balance_ratio']:.2f}")
+    futures_print(f"账户总览:")
+    futures_print(f"  总余额: {account_info['total_balance']:.2f} USDT")
+    futures_print(f"  可用余额: {account_info['free_balance']:.2f} USDT")
+    futures_print(f"  总敞口: {account_info['total_exposure']:.2f} USDT")
+    futures_print(f"  保证金使用: {account_info['total_margin_used']:.2f} USDT ({account_info['margin_usage_percent']:.1f}%)")
+    futures_print(f"  敞口/余额比: {account_info['exposure_to_balance_ratio']:.2f}")
     
     # 遍历所有启用的交易对
     for symbol in enabled_symbols:
@@ -1487,21 +1488,21 @@ def trading_bot():
 
 def futures_main():
     """主函数"""
-    print("多交易对币安自动交易机器人启动成功！")
-    print(f"启用的交易对: {', '.join(enabled_symbols)}")
-    print("融合技术指标策略 + 币安实盘接口 + SQLite数据库存储")
+    futures_print("多交易对币安自动交易机器人启动成功！")
+    futures_print(f"启用的交易对: {', '.join(enabled_symbols)}")
+    futures_print("融合技术指标策略 + 币安实盘接口 + SQLite数据库存储")
 
     if GLOBAL_CONFIG['test_mode']:
-        print("当前为模拟模式，不会真实下单")
+        futures_print("当前为模拟模式，不会真实下单")
     else:
-        print("实盘交易模式，请谨慎操作！")
+        futures_print("实盘交易模式，请谨慎操作！")
 
-    print(f"交易周期: {GLOBAL_CONFIG['timeframe']}")
-    print("已启用完整技术指标分析、持仓跟踪功能和历史数据存储")
+    futures_print(f"交易周期: {GLOBAL_CONFIG['timeframe']}")
+    futures_print("已启用完整技术指标分析、持仓跟踪功能和历史数据存储")
 
     # 初始化数据库
     if not init_database():
-        print("数据库初始化失败，程序退出")
+        log_futures_error("数据库初始化失败，程序退出")
         return
     
     # 加载历史统计数据
@@ -1511,23 +1512,23 @@ def futures_main():
     if trading_stats['start_time'] is None:
         trading_stats['start_time'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         update_trading_stats()
-        print(f"设置新的启动时间: {trading_stats['start_time']}")
+        futures_print(f"设置新的启动时间: {trading_stats['start_time']}")
     else:
-        print(f"使用历史启动时间: {trading_stats['start_time']}")
+        futures_print(f"使用历史启动时间: {trading_stats['start_time']}")
 
     # 根据时间周期设置执行频率
     if GLOBAL_CONFIG['timeframe'] == '1h':
         schedule.every().hour.at(":01").do(trading_bot)
-        print("执行频率: 每小时一次")
+        futures_print("执行频率: 每小时一次")
     elif GLOBAL_CONFIG['timeframe'] == '15m':
         schedule.every(15).minutes.do(trading_bot)
-        print("执行频率: 每15分钟一次")
+        futures_print("执行频率: 每15分钟一次")
     elif GLOBAL_CONFIG['timeframe'] == '5m':
         schedule.every(5).minutes.do(trading_bot)
-        print("执行频率: 每5分钟一次")
+        futures_print("执行频率: 每5分钟一次")
     else:
         schedule.every().hour.at(":01").do(trading_bot)
-        print("执行频率: 每小时一次")
+        futures_print("执行频率: 每小时一次")
 
     # 立即执行一次
     trading_bot()
@@ -1538,17 +1539,17 @@ def futures_main():
             schedule.run_pending()
             time.sleep(1)
     except KeyboardInterrupt:
-        print("\n程序被用户中断")
+        futures_print("\n程序被用户中断")
         # 关闭数据库连接
         if db_connection:
             db_connection.close()
-            print("数据库连接已关闭")
+            futures_print("数据库连接已关闭")
     except Exception as e:
-        print(f"程序运行异常: {e}")
+        log_futures_error(f"程序运行异常: {e}")
         # 关闭数据库连接
         if db_connection:
             db_connection.close()
-            print("数据库连接已关闭")
+            futures_print("数据库连接已关闭")
 
 
 if __name__ == "__main__":

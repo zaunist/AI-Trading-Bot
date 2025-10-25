@@ -26,6 +26,7 @@ RUN pip install --upgrade pip && \
 COPY futures_trading.py .
 COPY spot_trading.py .
 COPY main.py .
+COPY thread_logger.py .
 COPY .env.example .
 
 # 创建数据目录

@@ -18,6 +18,7 @@ import re
 import sqlite3
 import threading
 from dotenv import load_dotenv
+from thread_logger import log_spot, log_spot_warning, log_spot_error, spot_print
 
 load_dotenv()
 
@@ -106,7 +107,7 @@ def init_spot_database():
                 columns = [column[1] for column in cursor.fetchall()]
                 if 'symbol' not in columns:
                     cursor.execute("ALTER TABLE price_data ADD COLUMN symbol TEXT")
-                    print("为price_data表添加symbol字段")
+                    spot_print("为price_data表添加symbol字段")
             except:
                 pass
             
@@ -116,7 +117,7 @@ def init_spot_database():
                 columns = [column[1] for column in cursor.fetchall()]
                 if 'symbol' not in columns:
                     cursor.execute("ALTER TABLE trading_signals ADD COLUMN symbol TEXT")
-                    print("为trading_signals表添加symbol字段")
+                    spot_print("为trading_signals表添加symbol字段")
             except:
                 pass
             
@@ -126,7 +127,7 @@ def init_spot_database():
                 columns = [column[1] for column in cursor.fetchall()]
                 if 'symbol' not in columns:
                     cursor.execute("ALTER TABLE position_records ADD COLUMN symbol TEXT")
-                    print("为position_records表添加symbol字段")
+                    spot_print("为position_records表添加symbol字段")
             except:
                 pass
             
@@ -136,7 +137,7 @@ def init_spot_database():
                 columns = [column[1] for column in cursor.fetchall()]
                 if 'symbol' not in columns:
                     cursor.execute("ALTER TABLE technical_indicators ADD COLUMN symbol TEXT")
-                    print("为technical_indicators表添加symbol字段")
+                    spot_print("为technical_indicators表添加symbol字段")
             except:
                 pass
             
@@ -241,11 +242,11 @@ def init_spot_database():
                 ''', (datetime.now().strftime('%Y-%m-%d %H:%M:%S'),))
             
             spot_db_connection.commit()
-            print("现货数据库初始化成功")
+            spot_print("现货数据库初始化成功")
             return True
             
     except Exception as e:
-        print(f"现货数据库初始化失败: {e}")
+        log_spot_error(f"现货数据库初始化失败: {e}")
         import traceback
         traceback.print_exc()
         return False
@@ -290,7 +291,7 @@ def save_spot_price_data(price_data, symbol):
             spot_db_connection.commit()
             
     except Exception as e:
-        print(f"保存价格数据失败: {e}")
+        log_spot_warning(f"保存价格数据失败: {e}")
 
 
 def save_spot_trading_signal(signal_data, price_data, symbol):
@@ -319,7 +320,7 @@ def save_spot_trading_signal(signal_data, price_data, symbol):
             spot_db_connection.commit()
             
     except Exception as e:
-        print(f"保存交易信号失败: {e}")
+        log_spot_warning(f"保存交易信号失败: {e}")
 
 
 def save_spot_position_record(position_data, symbol):
@@ -355,7 +356,7 @@ def save_spot_position_record(position_data, symbol):
             spot_db_connection.commit()
             
     except Exception as e:
-        print(f"保存持仓记录失败: {e}")
+        log_spot_warning(f"保存持仓记录失败: {e}")
 
 
 def update_spot_trading_stats():
@@ -381,7 +382,7 @@ def update_spot_trading_stats():
             spot_db_connection.commit()
             
     except Exception as e:
-        print(f"更新交易统计失败: {e}")
+        log_spot_warning(f"更新交易统计失败: {e}")
 
 
 def load_spot_trading_stats():
@@ -400,9 +401,9 @@ def load_spot_trading_stats():
                 spot_trading_stats['successful_trades'] = result[4]
                 spot_trading_stats['total_pnl'] = result[5]
                 spot_trading_stats['last_signal_time'] = result[6]
-                print(f"已加载历史统计数据: 启动时间 {result[1]}, 总调用次数 {result[2]}")
+                spot_print(f"已加载历史统计数据: 启动时间 {result[1]}, 总调用次数 {result[2]}")
             else:
-                print("未找到历史统计数据，使用默认值")
+                spot_print("未找到历史统计数据，使用默认值")
             
     except Exception as e:
         print(f"加载交易统计失败: {e}")
@@ -425,7 +426,7 @@ def get_spot_historical_price_data(symbol, limit=100):
             return results
             
     except Exception as e:
-        print(f"获取历史价格数据失败: {e}")
+        log_spot_warning(f"获取历史价格数据失败: {e}")
         return []
 
 
@@ -447,7 +448,7 @@ def get_spot_historical_signals(symbol, limit=30):
             return results
             
     except Exception as e:
-        print(f"获取历史交易信号失败: {e}")
+        log_spot_warning(f"获取历史交易信号失败: {e}")
         return []
 
 
@@ -523,7 +524,7 @@ def calculate_spot_technical_indicators(df):
 
         return df
     except Exception as e:
-        print(f"技术指标计算失败: {e}")
+        log_spot_warning(f"技术指标计算失败: {e}")
         return df
 
 
@@ -597,7 +598,7 @@ def get_spot_ohlcv_enhanced(symbol):
             'full_data': df
         }
     except Exception as e:
-        print(f"获取 {symbol} 增强K线数据失败: {e}")
+        log_spot_error(f"获取 {symbol} 增强K线数据失败: {e}")
         return None
 
 def safe_json_parse(json_str):
@@ -613,8 +614,8 @@ def safe_json_parse(json_str):
             json_str = re.sub(r',\s*]', ']', json_str)
             return json.loads(json_str)
         except json.JSONDecodeError as e:
-            print(f"JSON解析失败，原始内容: {json_str}")
-            print(f"错误详情: {e}")
+            log_spot_error(f"JSON解析失败，原始内容: {json_str}")
+            log_spot_error(f"错误详情: {e}")
             return None
 
 
@@ -653,7 +654,7 @@ def get_spot_current_position(symbol):
         if quote_currency in balance and 'free' in balance[quote_currency]:
             quote_balance = float(balance[quote_currency]['free'])
         
-        print(f"{symbol} 调试 - 基础货币余额: {base_balance}, 计价货币余额: {quote_balance}")
+        spot_print(f"{symbol} 调试 - 基础货币余额: {base_balance}, 计价货币余额: {quote_balance}")
         
         # 计算仓位百分比（基于账户总资金）
         try:
@@ -684,7 +685,7 @@ def get_spot_current_position(symbol):
         }
         
     except Exception as e:
-        print(f"获取 {symbol} 现货余额失败: {e}")
+        log_spot_error(f"获取 {symbol} 现货余额失败: {e}")
         import traceback
         traceback.print_exc()
         return None
@@ -726,7 +727,7 @@ def get_spot_all_symbols_data():
             total_exposure = free_balance  # 现货交易中，敞口就是可用USDT余额
                 
         except Exception as e:
-            print(f"获取 {symbol} 数据失败: {e}")
+            log_spot_warning(f"获取 {symbol} 数据失败: {e}")
             continue
     
     return {
@@ -834,7 +835,7 @@ def generate_spot_enhanced_prompt(price_data, symbol, all_symbols_info=None):
             sharpe_ratio = returns.mean() / returns.std() * (252 ** 0.5) if returns.std() != 0 else 0
             
         except Exception as e:
-            print(f"获取 {symbol} 长周期数据失败: {e}")
+            log_spot_warning(f"获取 {symbol} 长周期数据失败: {e}")
             longer_ema_20 = 0
             longer_ema_50 = 0
             atr_3 = 0
@@ -1001,8 +1002,11 @@ def analyze_spot_with_deepseek(price_data, symbol, all_symbols_info=None):
     # 生成多币种综合分析提示词
     prompt = generate_spot_enhanced_prompt(price_data, symbol, all_symbols_info)
 
-    print(f"{symbol} DeepSeek多币种综合分析提示词生成完毕，准备请求DeepSeek API...")
-    print(f"{symbol} 提示词长度: {len(prompt)} 字符")
+    spot_print(f"{symbol} DeepSeek多币种综合分析提示词生成完毕，准备请求DeepSeek API...")
+    spot_print(f"{symbol} 提示词长度: {len(prompt)} 字符")
+    spot_print(f"{symbol} 完整提示词: \n{prompt}\n")
+
+     # 调用DeepSeek API进行多币种综合分析
 
     try:
         response = deepseek_client.chat.completions.create(
@@ -1063,24 +1067,24 @@ def analyze_spot_with_deepseek(price_data, symbol, all_symbols_info=None):
         symbol_signals = spot_signal_history.get(symbol, [])
         signal_count = len([s for s in symbol_signals if s.get('signal') == signal_data['signal']])
         total_signals = len(symbol_signals)
-        print(f"{symbol} 信号统计: {signal_data['signal']} (最近{total_signals}次中出现{signal_count}次)")
+        spot_print(f"{symbol} 信号统计: {signal_data['signal']} (最近{total_signals}次中出现{signal_count}次)")
 
         # 信号连续性检查（按交易对分别检查）
         if len(symbol_signals) >= 3:
             last_three = [s['signal'] for s in symbol_signals[-3:]]
             if len(set(last_three)) == 1:
-                print(f"{symbol} ⚠️ 注意：连续3次{signal_data['signal']}信号")
+                log_spot_warning(f"{symbol} ⚠️ 注意：连续3次{signal_data['signal']}信号")
 
         # 打印多币种分析结果
-        print(f"{symbol} 多币种综合分析结果:")
-        print(f"  信号: {signal_data['signal']}")
-        print(f"  仓位: {signal_data['position_size_percent']}%")
-        print(f"  风险评估: {signal_data.get('risk_assessment', 'N/A')}")
+        spot_print(f"{symbol} 多币种综合分析结果:")
+        spot_print(f"  信号: {signal_data['signal']}")
+        spot_print(f"  仓位: {signal_data['position_size_percent']}%")
+        spot_print(f"  风险评估: {signal_data.get('risk_assessment', 'N/A')}")
 
         return signal_data
 
     except Exception as e:
-        print(f"{symbol} DeepSeek多币种分析失败: {e}")
+        log_spot_error(f"{symbol} DeepSeek多币种分析失败: {e}")
         return create_spot_fallback_signal(price_data)
 
 
@@ -1092,11 +1096,11 @@ def analyze_spot_with_deepseek_with_retry(price_data, symbol, all_symbols_info=N
             if signal_data and not signal_data.get('is_fallback', False):
                 return signal_data
 
-            print(f"{symbol} 第{attempt + 1}次尝试失败，进行重试...")
+            spot_print(f"{symbol} 第{attempt + 1}次尝试失败，进行重试...")
             time.sleep(1)
 
         except Exception as e:
-            print(f"{symbol} 第{attempt + 1}次尝试异常: {e}")
+            log_spot_error(f"{symbol} 第{attempt + 1}次尝试异常: {e}")
             if attempt == max_retries - 1:
                 return create_spot_fallback_signal(price_data)
             time.sleep(1)
@@ -1109,20 +1113,20 @@ def execute_spot_trade(signal_data, price_data, symbol):
     config = SPOT_TRADE_CONFIGS[symbol]
     current_position = get_spot_current_position(symbol)
 
-    print(f"{symbol} 交易信号: {signal_data['signal']}")
-    print(f"{symbol} 信心程度: {signal_data['confidence']}")
-    print(f"{symbol} 理由: {signal_data['reason']}")
-    print(f"{symbol} 止损: ${signal_data['stop_loss']:,.2f}")
-    print(f"{symbol} 止盈: ${signal_data['take_profit']:,.2f}")
-    print(f"{symbol} 当前持仓: {current_position}")
+    spot_print(f"{symbol} 交易信号: {signal_data['signal']}")
+    spot_print(f"{symbol} 信心程度: {signal_data['confidence']}")
+    spot_print(f"{symbol} 理由: {signal_data['reason']}")
+    spot_print(f"{symbol} 止损: ${signal_data['stop_loss']:,.2f}")
+    spot_print(f"{symbol} 止盈: ${signal_data['take_profit']:,.2f}")
+    spot_print(f"{symbol} 当前持仓: {current_position}")
 
     # 风险管理：低信心信号不执行
     if signal_data['confidence'] == 'LOW' and not SPOT_GLOBAL_CONFIG['test_mode']:
-        print(f"{symbol} ⚠️ 低信心信号，跳过执行")
+        log_spot_warning(f"{symbol} ⚠️ 低信心信号，跳过执行")
         return
 
     if SPOT_GLOBAL_CONFIG['test_mode']:
-        print(f"{symbol} 测试模式 - 仅模拟交易")
+        spot_print(f"{symbol} 测试模式 - 仅模拟交易")
         return
 
     try:
@@ -1134,13 +1138,13 @@ def execute_spot_trade(signal_data, price_data, symbol):
             if isinstance(usdt_balance, (int, float)):
                 # 确保是数字类型
                 usdt_balance = float(usdt_balance)
-                print(f"{symbol} 可用USDT余额: {usdt_balance:.2f} USDT")
+                spot_print(f"{symbol} 可用USDT余额: {usdt_balance:.2f} USDT")
             else:
-                print(f"{symbol} 警告 - USDT余额不是数字类型: {usdt_balance}")
+                log_spot_warning(f"{symbol} 警告 - USDT余额不是数字类型: {usdt_balance}")
                 usdt_balance = 0  # 如果不是数字，设为0
         else:
-            print(f"{symbol} 未找到USDT余额信息")
-            print(f"{symbol} 可用余额类型: {list(balance.keys())}")
+            spot_print(f"{symbol} 未找到USDT余额信息")
+            spot_print(f"{symbol} 可用余额类型: {list(balance.keys())}")
             usdt_balance = 0
 
         # 从信号中获取交易参数
@@ -1159,19 +1163,19 @@ def execute_spot_trade(signal_data, price_data, symbol):
         if signal_data['signal'] in ['BUY', 'SELL']:
             trade_amount_base = position_size_usdt / price_data['price']
             
-            print(f"{symbol} 交易金额: {position_size_percent}% ({position_size_usdt:.2f} USDT)")
-            print(f"{symbol} 计算得出的交易数量({config['base_currency']}): {trade_amount_base:.6f}")
+            spot_print(f"{symbol} 交易金额: {position_size_percent}% ({position_size_usdt:.2f} USDT)")
+            spot_print(f"{symbol} 计算得出的交易数量({config['base_currency']}): {trade_amount_base:.6f}")
 
             # 检查余额是否足够
             if position_size_usdt > usdt_balance * 0.9:  # 留10%作为缓冲
-                print(f"{symbol} ⚠️ 资金不足，跳过交易。需要: {position_size_usdt:.2f} USDT, 可用: {usdt_balance:.2f} USDT")
+                log_spot_warning(f"{symbol} ⚠️ 资金不足，跳过交易。需要: {position_size_usdt:.2f} USDT, 可用: {usdt_balance:.2f} USDT")
                 return
 
-            print(f"{symbol} ✅ 资金充足，继续执行")
+            spot_print(f"{symbol} ✅ 资金充足，继续执行")
 
             # 执行交易逻辑
             if signal_data['signal'] == 'BUY':
-                print(f"{symbol} 买入...")
+                spot_print(f"{symbol} 买入...")
                 spot_exchange.create_market_buy_order(
                     config['symbol'],
                     trade_amount_base
@@ -1183,23 +1187,23 @@ def execute_spot_trade(signal_data, price_data, symbol):
                 if base_currency in balance and 'free' in balance[base_currency]:
                     base_balance = float(balance[base_currency]['free'])
                     if base_balance >= trade_amount_base:
-                        print(f"{symbol} 卖出...")
+                        spot_print(f"{symbol} 卖出...")
                         spot_exchange.create_market_sell_order(
                             config['symbol'],
                             trade_amount_base
                         )
                     else:
-                        print(f"{symbol} ⚠️ 基础货币余额不足，跳过交易。需要: {trade_amount_base:.6f}, 可用: {base_balance:.6f}")
+                        log_spot_warning(f"{symbol} ⚠️ 基础货币余额不足，跳过交易。需要: {trade_amount_base:.6f}, 可用: {base_balance:.6f}")
                 else:
-                    print(f"{symbol} ⚠️ 未找到基础货币余额信息")
+                    log_spot_warning(f"{symbol} ⚠️ 未找到基础货币余额信息")
 
-        print(f"{symbol} 订单执行成功")
+        spot_print(f"{symbol} 订单执行成功")
         time.sleep(2)
         position = get_spot_current_position(symbol)
-        print(f"{symbol} 更新后持仓: {position}")
+        spot_print(f"{symbol} 更新后持仓: {position}")
 
     except Exception as e:
-        print(f"{symbol} 订单执行失败: {e}")
+        log_spot_error(f"{symbol} 订单执行失败: {e}")
         import traceback
         traceback.print_exc()
 
@@ -1209,22 +1213,22 @@ def spot_trading_bot_for_symbol(symbol, all_symbols_info=None):
     config = SPOT_TRADE_CONFIGS[symbol]
     
     if not config['enabled']:
-        print(f"{symbol} 交易对已禁用，跳过")
+        spot_print(f"{symbol} 交易对已禁用，跳过")
         return
     
-    print(f"\n{'='*20} {symbol} 现货交易 {'='*20}")
-    print(f"执行时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"{'='*50}")
+    spot_print(f"\n{'='*20} {symbol} 现货交易 {'='*20}")
+    spot_print(f"执行时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    spot_print(f"{'='*50}")
     
     # 1. 获取增强版K线数据
     price_data = get_spot_ohlcv_enhanced(symbol)
     if not price_data:
-        print(f"{symbol} 获取价格数据失败，跳过")
+        log_spot_warning(f"{symbol} 获取价格数据失败，跳过")
         return
     
-    print(f"{symbol} 当前价格: ${price_data['price']:,.2f}")
-    print(f"{symbol} 数据周期: {SPOT_GLOBAL_CONFIG['timeframe']}")
-    print(f"{symbol} 价格变化: {price_data['price_change']:+.2f}%")
+    spot_print(f"{symbol} 当前价格: ${price_data['price']:,.2f}")
+    spot_print(f"{symbol} 数据周期: {SPOT_GLOBAL_CONFIG['timeframe']}")
+    spot_print(f"{symbol} 价格变化: {price_data['price_change']:+.2f}%")
     
     # 2. 保存价格数据到数据库
     save_spot_price_data(price_data, symbol)
@@ -1237,7 +1241,7 @@ def spot_trading_bot_for_symbol(symbol, all_symbols_info=None):
     signal_data = analyze_spot_with_deepseek_with_retry(price_data, symbol, all_symbols_info)
     
     if signal_data.get('is_fallback', False):
-        print(f"{symbol} ⚠️ 使用备用交易信号")
+        log_spot_warning(f"{symbol} ⚠️ 使用备用交易信号")
     
     # 5. 执行交易
     execute_spot_trade(signal_data, price_data, symbol)
@@ -1251,21 +1255,21 @@ def spot_trading_bot_for_symbol(symbol, all_symbols_info=None):
 
 def spot_trading_bot():
     """主现货交易机器人函数 - 处理所有启用的交易对（多币种综合分析）"""
-    print("\n" + "=" * 60)
-    print(f"多交易对现货交易机器人执行时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print("=" * 60)
+    spot_print("\n" + "=" * 60)
+    spot_print(f"多交易对现货交易机器人执行时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    spot_print("=" * 60)
     
     # 获取所有币种的综合数据（一次获取，多次使用）
-    print("正在获取所有币种的综合数据...")
+    spot_print("正在获取所有币种的综合数据...")
     all_symbols_info = get_spot_all_symbols_data()
     
     # 显示账户总览
     account_info = all_symbols_info['account_info']
-    print(f"账户总览:")
-    print(f"  总余额: {account_info['total_balance']:.2f} USDT")
-    print(f"  可用余额: {account_info['free_balance']:.2f} USDT")
-    print(f"  可用资金: {account_info['total_exposure']:.2f} USDT")
-    print(f"  可用资金/总余额比: {account_info['exposure_to_balance_ratio']:.2f}")
+    spot_print(f"账户总览:")
+    spot_print(f"  总余额: {account_info['total_balance']:.2f} USDT")
+    spot_print(f"  可用余额: {account_info['free_balance']:.2f} USDT")
+    spot_print(f"  可用资金: {account_info['total_exposure']:.2f} USDT")
+    spot_print(f"  可用资金/总余额比: {account_info['exposure_to_balance_ratio']:.2f}")
     
     # 遍历所有启用的交易对
     for symbol in spot_enabled_symbols:
@@ -1276,21 +1280,21 @@ def spot_trading_bot():
 
 def spot_main():
     """现货交易主函数"""
-    print("多交易对币安现货自动交易机器人启动成功！")
-    print(f"启用的交易对: {', '.join(spot_enabled_symbols)}")
-    print("融合技术指标策略 + 币安实盘接口 + SQLite数据库存储")
+    spot_print("多交易对币安现货自动交易机器人启动成功！")
+    spot_print(f"启用的交易对: {', '.join(spot_enabled_symbols)}")
+    spot_print("融合技术指标策略 + 币安实盘接口 + SQLite数据库存储")
 
     if SPOT_GLOBAL_CONFIG['test_mode']:
-        print("当前为模拟模式，不会真实下单")
+        spot_print("当前为模拟模式，不会真实下单")
     else:
-        print("实盘交易模式，请谨慎操作！")
+        spot_print("实盘交易模式，请谨慎操作！")
 
-    print(f"交易周期: {SPOT_GLOBAL_CONFIG['timeframe']}")
-    print("已启用完整技术指标分析、持仓跟踪功能和历史数据存储")
+    spot_print(f"交易周期: {SPOT_GLOBAL_CONFIG['timeframe']}")
+    spot_print("已启用完整技术指标分析、持仓跟踪功能和历史数据存储")
 
     # 初始化数据库
     if not init_spot_database():
-        print("数据库初始化失败，程序退出")
+        log_spot_error("数据库初始化失败，程序退出")
         return
     
     # 加载历史统计数据
@@ -1300,23 +1304,23 @@ def spot_main():
     if spot_trading_stats['start_time'] is None:
         spot_trading_stats['start_time'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         update_spot_trading_stats()
-        print(f"设置新的启动时间: {spot_trading_stats['start_time']}")
+        spot_print(f"设置新的启动时间: {spot_trading_stats['start_time']}")
     else:
-        print(f"使用历史启动时间: {spot_trading_stats['start_time']}")
+        spot_print(f"使用历史启动时间: {spot_trading_stats['start_time']}")
 
     # 根据时间周期设置执行频率
     if SPOT_GLOBAL_CONFIG['timeframe'] == '1h':
         schedule.every().hour.at(":01").do(spot_trading_bot)
-        print("执行频率: 每小时一次")
+        spot_print("执行频率: 每小时一次")
     elif SPOT_GLOBAL_CONFIG['timeframe'] == '15m':
         schedule.every(15).minutes.do(spot_trading_bot)
-        print("执行频率: 每15分钟一次")
+        spot_print("执行频率: 每15分钟一次")
     elif SPOT_GLOBAL_CONFIG['timeframe'] == '5m':
         schedule.every(5).minutes.do(spot_trading_bot)
-        print("执行频率: 每5分钟一次")
+        spot_print("执行频率: 每5分钟一次")
     else:
         schedule.every().hour.at(":01").do(spot_trading_bot)
-        print("执行频率: 每小时一次")
+        spot_print("执行频率: 每小时一次")
 
     # 立即执行一次
     spot_trading_bot()
@@ -1327,17 +1331,17 @@ def spot_main():
             schedule.run_pending()
             time.sleep(1)
     except KeyboardInterrupt:
-        print("\n程序被用户中断")
+        spot_print("\n程序被用户中断")
         # 关闭数据库连接
         if spot_db_connection:
             spot_db_connection.close()
-            print("数据库连接已关闭")
+            spot_print("数据库连接已关闭")
     except Exception as e:
-        print(f"程序运行异常: {e}")
+        log_spot_error(f"程序运行异常: {e}")
         # 关闭数据库连接
         if spot_db_connection:
             spot_db_connection.close()
-            print("数据库连接已关闭")
+            spot_print("数据库连接已关闭")
 
 
 if __name__ == "__main__":
