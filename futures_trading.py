@@ -127,6 +127,11 @@ def init_database():
                 if 'symbol' not in columns:
                     cursor.execute("ALTER TABLE position_records ADD COLUMN symbol TEXT")
                     futures_print("为position_records表添加symbol字段")
+                    
+                # 检查并添加take_profit字段（如果不存在）
+                if 'take_profit' not in columns:
+                    cursor.execute("ALTER TABLE position_records ADD COLUMN take_profit REAL")
+                    futures_print("为position_records表添加take_profit字段")
             except:
                 pass
             
@@ -194,6 +199,7 @@ def init_database():
                     unrealized_pnl REAL,
                     position_amt REAL,
                     stop_loss REAL,
+                    take_profit REAL,
                     confidence REAL
                 )
             ''')
@@ -302,10 +308,32 @@ def save_trading_signal(signal_data, price_data, symbol):
         with db_lock:
             cursor = db_connection.cursor()
             
+            # 检查是否需要添加新字段
+            try:
+                cursor.execute("PRAGMA table_info(trading_signals)")
+                columns = [column[1] for column in cursor.fetchall()]
+                
+                # 添加新字段（如果不存在）
+                if 'partial_close_percentage' not in columns:
+                    cursor.execute("ALTER TABLE trading_signals ADD COLUMN partial_close_percentage REAL")
+                    futures_print("为trading_signals表添加partial_close_percentage字段")
+                
+                if 'signal_strength' not in columns:
+                    cursor.execute("ALTER TABLE trading_signals ADD COLUMN signal_strength TEXT")
+                    futures_print("为trading_signals表添加signal_strength字段")
+                    
+                if 'risk_assessment' not in columns:
+                    cursor.execute("ALTER TABLE trading_signals ADD COLUMN risk_assessment TEXT")
+                    futures_print("为trading_signals表添加risk_assessment字段")
+                    
+            except Exception as e:
+                log_futures_warning(f"检查/添加trading_signals表字段失败: {e}")
+            
             cursor.execute('''
                 INSERT INTO trading_signals
-                (symbol, timestamp, signal, reason, stop_loss, take_profit, confidence, price, is_fallback)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (symbol, timestamp, signal, reason, stop_loss, take_profit, confidence, price, is_fallback,
+                 partial_close_percentage, signal_strength, risk_assessment)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 symbol,
                 signal_data.get('timestamp', datetime.now().strftime('%Y-%m-%d %H:%M:%S')),
@@ -315,7 +343,10 @@ def save_trading_signal(signal_data, price_data, symbol):
                 signal_data.get('take_profit'),
                 signal_data.get('confidence'),
                 price_data['price'],
-                1 if signal_data.get('is_fallback', False) else 0
+                1 if signal_data.get('is_fallback', False) else 0,
+                signal_data.get('partial_close_percentage', 50),
+                signal_data.get('signal_strength', 'MEDIUM'),
+                signal_data.get('risk_assessment', '')
             ))
             
             db_connection.commit()
@@ -324,7 +355,7 @@ def save_trading_signal(signal_data, price_data, symbol):
         log_futures_warning(f"保存交易信号失败: {e}")
 
 
-def save_position_record(position_data, symbol):
+def save_position_record(position_data, symbol, stop_loss=None, take_profit=None):
     """保存持仓记录到数据库"""
     global db_connection
     try:
@@ -334,8 +365,8 @@ def save_position_record(position_data, symbol):
             if position_data:
                 cursor.execute('''
                     INSERT INTO position_records
-                    (symbol, timestamp, side, size, entry_price, unrealized_pnl, position_amt)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    (symbol, timestamp, side, size, entry_price, unrealized_pnl, position_amt, stop_loss, take_profit)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''', (
                     symbol,
                     datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
@@ -343,17 +374,21 @@ def save_position_record(position_data, symbol):
                     position_data['size'],
                     position_data['entry_price'],
                     position_data.get('unrealized_pnl', 0),
-                    position_data.get('position_amt', 0)
+                    position_data.get('position_amt', 0),
+                    stop_loss if stop_loss and stop_loss > 0 else -1,
+                    take_profit if take_profit and take_profit > 0 else -1
                 ))
             else:
                 cursor.execute('''
                     INSERT INTO position_records
-                    (symbol, timestamp, side, size, entry_price, unrealized_pnl, position_amt)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    (symbol, timestamp, side, size, entry_price, unrealized_pnl, position_amt, stop_loss, take_profit)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''', (
                     symbol,
                     datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                    None, 0, 0, 0, 0
+                    None, 0, 0, 0, 0,
+                    stop_loss if stop_loss and stop_loss > 0 else -1,
+                    take_profit if take_profit and take_profit > 0 else -1
                 ))
             
             db_connection.commit()
@@ -439,13 +474,30 @@ def get_historical_signals(symbol, limit=30):
     try:
         with db_lock:
             cursor = db_connection.cursor()
-            cursor.execute('''
-                SELECT timestamp, signal, reason, stop_loss, take_profit, confidence, price, is_fallback
-                FROM trading_signals
-                WHERE symbol = ?
-                ORDER BY timestamp DESC
-                LIMIT ?
-            ''', (symbol, limit))
+            
+            # 检查表结构，确定哪些字段存在
+            cursor.execute("PRAGMA table_info(trading_signals)")
+            columns = [column[1] for column in cursor.fetchall()]
+            
+            # 构建查询语句，包含所有可能的字段
+            if 'partial_close_percentage' in columns and 'signal_strength' in columns and 'risk_assessment' in columns:
+                cursor.execute('''
+                    SELECT timestamp, signal, reason, stop_loss, take_profit, confidence, price, is_fallback,
+                           partial_close_percentage, signal_strength, risk_assessment
+                    FROM trading_signals
+                    WHERE symbol = ?
+                    ORDER BY timestamp DESC
+                    LIMIT ?
+                ''', (symbol, limit))
+            else:
+                # 使用原有字段
+                cursor.execute('''
+                    SELECT timestamp, signal, reason, stop_loss, take_profit, confidence, price, is_fallback
+                    FROM trading_signals
+                    WHERE symbol = ?
+                    ORDER BY timestamp DESC
+                    LIMIT ?
+                ''', (symbol, limit))
             
             results = cursor.fetchall()
             return results
@@ -453,6 +505,7 @@ def get_historical_signals(symbol, limit=30):
     except Exception as e:
         log_futures_warning(f"获取历史交易信号失败: {e}")
         return []
+
 
 def calculate_technical_indicators(df):
     """计算技术指标 - 优化版多时间周期分析"""
@@ -695,12 +748,15 @@ def create_fallback_signal(price_data):
         "position_size_percent": 5,  # 默认5%仓位
         "leverage": 5,  # 默认5倍杠杆
         "action": "HOLD",
+        "partial_close_percentage": 50,  # 默认50%减仓
+        "signal_strength": "WEAK",  # 默认弱信号
+        "risk_assessment": "备用信号，风险评估较低",
         "is_fallback": True
     }
 
 
 def get_current_position(symbol):
-    """获取指定交易对的当前持仓情况"""
+    """获取指定交易对的当前持仓情况，包括止损和止盈位置"""
     try:
         config = TRADE_CONFIGS[symbol]
         positions = exchange.fetch_positions([config['symbol']])
@@ -728,13 +784,51 @@ def get_current_position(symbol):
 
                 if position_amt != 0:  # 有持仓
                     side = 'long' if position_amt > 0 else 'short'
+                    
+                    # 获取止损和止盈位置
+                    stop_loss = None
+                    take_profit = None
+                    
+                    # 从数据库查询最近的止损和止盈位置
+                    try:
+                        with db_lock:
+                            cursor = db_connection.cursor()
+                            cursor.execute('''
+                                SELECT stop_loss, take_profit
+                                FROM position_records
+                                WHERE symbol = ? AND side = ? AND size > 0
+                                ORDER BY timestamp DESC
+                                LIMIT 1
+                            ''', (symbol, side))
+                            
+                            result = cursor.fetchone()
+                            if result:
+                                stop_loss, take_profit = result[0], result[1]
+                            else:
+                                # 如果没有找到记录，尝试从最近的交易信号中获取
+                                cursor.execute('''
+                                    SELECT stop_loss, take_profit
+                                    FROM trading_signals
+                                    WHERE symbol = ? AND signal IN ('BUY', 'SELL')
+                                    ORDER BY timestamp DESC
+                                    LIMIT 1
+                                ''', (symbol,))
+                                
+                                signal_result = cursor.fetchone()
+                                if signal_result:
+                                    stop_loss, take_profit = signal_result[0], signal_result[1]
+                    except Exception as e:
+                        log_futures_warning(f"获取 {symbol} 止损止盈位失败: {e}")
+                    
                     return {
                         'side': side,
                         'size': abs(position_amt),
                         'entry_price': float(pos.get('entryPrice', 0)),
                         'unrealized_pnl': float(pos.get('unrealizedPnl', 0)),
                         'position_amt': position_amt,
-                        'symbol': pos['symbol']  # 返回实际的symbol用于调试
+                        'symbol': pos['symbol'],  # 返回实际的symbol用于调试
+                        'stop_loss': stop_loss,    # 添加止损位置
+                        'take_profit': take_profit # 添加止盈位置
                     }
 
         futures_print(f"{symbol} 调试 - 未找到有效持仓")
@@ -1003,8 +1097,54 @@ def generate_enhanced_prompt(price_data, symbol, all_symbols_info=None):
     
     # 获取持仓信息
     position_info = "无持仓"
+    stop_loss_status = "无止损状态"
+    take_profit_status = "无止盈状态"
+    
     if current_pos:
         position_info = f"{current_pos['side']}仓 {current_pos['size']} {symbol.split('/')[0]}, 入场价: ${current_pos['entry_price']:.2f}, 浮盈: ${current_pos['unrealized_pnl']:.2f}"
+        
+        # 获取固定的止损位和止盈位
+        fixed_stop_loss = current_pos.get('stop_loss')
+        fixed_take_profit = current_pos.get('take_profit')
+        
+        current_price = price_data['price']
+        
+        # 检查是否接近或达到止损/止盈位置
+        if fixed_stop_loss  and fixed_stop_loss > 0 and isinstance(fixed_stop_loss, (int, float)):
+            if current_pos['side'] == 'long':
+                stop_loss_distance = (current_price - fixed_stop_loss) / fixed_stop_loss * 100
+                if current_price <= fixed_stop_loss:
+                    stop_loss_status = f"已触发止损 (当前价格 ${current_price:.2f} <= 止损价 ${fixed_stop_loss:.2f})"
+                elif stop_loss_distance <= 2:
+                    stop_loss_status = f"接近止损 (距离 {stop_loss_distance:.2f}%, 当前价 ${current_price:.2f}, 止损价 ${fixed_stop_loss:.2f})"
+                else:
+                    stop_loss_status = f"止损安全 (距离 {stop_loss_distance:.2f}%, 当前价 ${current_price:.2f}, 止损价 ${fixed_stop_loss:.2f})"
+            else:  # short position
+                stop_loss_distance = (fixed_stop_loss - current_price) / fixed_stop_loss * 100
+                if current_price >= fixed_stop_loss:
+                    stop_loss_status = f"已触发止损 (当前价格 ${current_price:.2f} >= 止损价 ${fixed_stop_loss:.2f})"
+                elif stop_loss_distance <= 2:
+                    stop_loss_status = f"接近止损 (距离 {stop_loss_distance:.2f}%, 当前价 ${current_price:.2f}, 止损价 ${fixed_stop_loss:.2f})"
+                else:
+                    stop_loss_status = f"止损安全 (距离 {stop_loss_distance:.2f}%, 当前价 ${current_price:.2f}, 止损价 ${fixed_stop_loss:.2f})"
+        
+        if fixed_take_profit and fixed_take_profit > 0 and isinstance(fixed_take_profit, (int, float)):
+            if current_pos['side'] == 'long':
+                take_profit_distance = (fixed_take_profit - current_price) / fixed_take_profit * 100
+                if current_price >= fixed_take_profit:
+                    take_profit_status = f"已触发止盈 (当前价格 ${current_price:.2f} >= 止盈价 ${fixed_take_profit:.2f})"
+                elif take_profit_distance <= 2:
+                    take_profit_status = f"接近止盈 (距离 {take_profit_distance:.2f}%, 当前价 ${current_price:.2f}, 止盈价 ${fixed_take_profit:.2f})"
+                else:
+                    take_profit_status = f"止盈未达 (距离 {take_profit_distance:.2f}%, 当前价 ${current_price:.2f}, 止盈价 ${fixed_take_profit:.2f})"
+            else:  # short position
+                take_profit_distance = (current_price - fixed_take_profit) / fixed_take_profit * 100
+                if current_price <= fixed_take_profit:
+                    take_profit_status = f"已触发止盈 (当前价格 ${current_price:.2f} <= 止盈价 ${fixed_take_profit:.2f})"
+                elif take_profit_distance <= 2:
+                    take_profit_status = f"接近止盈 (距离 {take_profit_distance:.2f}%, 当前价 ${current_price:.2f}, 止盈价 ${fixed_take_profit:.2f})"
+                else:
+                    take_profit_status = f"止盈未达 (距离 {take_profit_distance:.2f}%, 当前价 ${current_price:.2f}, 止盈价 ${fixed_take_profit:.2f})"
     
     # 构建多币种综合分析提示词
     prompt = f"""你已经开始交易 {minutes_running} 分钟。
@@ -1038,6 +1178,11 @@ def generate_enhanced_prompt(price_data, symbol, all_symbols_info=None):
 当前价格: {price_data['price']} USDT
 资金费率: {funding_data['current_funding_rate']:.8f}
 未平合约: {funding_data['current_open_interest']:.2f}
+
+持仓状态分析:
+{position_info}
+止损状态: {stop_loss_status}
+止盈状态: {take_profit_status}
 
 {multi_tf_analysis}
 
@@ -1085,7 +1230,10 @@ RSI指标序列 (14周期): {[f"{r:.3f}" for r in recent_rsi_14]}
     
     # 添加最近信号历史
     for i, signal in enumerate(historical_signals[:5]):
-        prompt += f"{i+1}. {signal[2]} at {signal[1]} - 信心: {signal[6]}, 价格: ${signal[7]:.2f}\n"
+        if len(signal) >= 11:  # 新版本包含所有字段
+            prompt += f"{i+1}. {signal[2]} at {signal[1]} - 信心: {signal[6]}, 价格: ${signal[7]:.2f}, 信号强度: {signal[9]}, 减仓比例: {signal[8]}%\n"
+        else:  # 旧版本只有基本字段
+            prompt += f"{i+1}. {signal[2]} at {signal[1]} - 信心: {signal[6]}, 价格: ${signal[7]:.2f}\n"
     
     # 添加其他币种的简要信息
     if all_symbols_info and len(all_data) > 1:
@@ -1120,16 +1268,37 @@ RSI指标序列 (14周期): {[f"{r:.3f}" for r in recent_rsi_14]}
 - 已有同向持仓: 考虑增加仓位或保持现状
 - 已有反向持仓: 考虑平仓反转或减仓
 
+智能止损/止盈策略:
+当价格接近或已达到止损/止盈位置时，需要根据市场信号强度做出决策:
+1. 已触发止损/止盈:
+   - 强烈信号(技术指标明确反转): 完全平仓，不犹豫
+   - 中等信号(指标有反转迹象但不够明确): 减仓50-70%，保留部分仓位观察
+   - 弱信号(指标混乱，方向不明): 减仓30-50%，设置更紧的止损
+
+2. 接近止损/止盈(距离2%以内):
+   - 强烈信号(与持仓方向相反): 提前减仓30-50%，避免触发
+   - 中等信号(有反转迹象): 减仓20-30%，调整止损位
+   - 弱信号(无明显反转): 保持仓位，但提高警惕
+
+3. 减仓幅度由DeepSeek根据以下因素决定:
+   - 多时间周期技术指标一致性
+   - 成交量和市场情绪
+   - 支撑阻力位强度
+   - 整体市场波动性
+   - 当前持仓盈亏比例
+
 请返回JSON格式的交易决策:
 {{
-  "signal": "BUY" | "SELL" | "HOLD",
-  "reason": "详细分析理由，包括多币种综合考量",
+  "signal": "BUY" | "SELL" | "HOLD" | "PARTIAL_CLOSE",
+  "reason": "详细分析理由，包括多币种综合考量和止损/止盈策略",
   "stop_loss": 具体止损价格,
   "take_profit": 具体止盈价格,
   "confidence": "HIGH" | "MEDIUM" | "LOW",
   "position_size_percent": 仓位大小(1-100，基于可用余额百分比),
   "leverage": 杠杆倍数(2-20),
-  "action": "OPEN" | "CLOSE" | "INCREASE" | "DECREASE" | "HOLD",
+  "action": "OPEN" | "CLOSE" | "INCREASE" | "DECREASE" | "PARTIAL_CLOSE" | "HOLD",
+  "partial_close_percentage": 减仓比例(10-90，仅在PARTIAL_CLOSE时使用),
+  "signal_strength": "STRONG" | "MEDIUM" | "WEAK" (用于描述市场信号强度),
   "risk_assessment": "风险评估说明"
 }}
 """
@@ -1159,7 +1328,7 @@ def analyze_with_deepseek(price_data, symbol, all_symbols_info=None):
             model="deepseek-chat",
             messages=[
                 {"role": "system",
-                 "content": f"你是一个专业的加密货币投资组合分析师，专门进行多币种综合分析。你需要基于整体投资组合的风险状况来制定交易决策，而不仅仅是单个币种的技术分析。请严格按照要求的JSON格式返回交易信号，使用中文回复。"},
+                 "content": f"你是一个专业的加密货币投资组合分析师，专门进行多币种综合分析。你需要基于整体投资组合的风险状况来制定交易决策，而不仅仅是单个币种的技术分析。请严格按照要求的JSON格式返回交易信号，使用中文回复。特别注意：当价格接近或达到止损/止盈位置时，你需要根据市场信号强度智能决策是完全平仓还是部分减仓，减仓幅度由你根据技术指标和市场情况决定。"},
                 {"role": "user", "content": prompt}
             ],
             stream=False,
@@ -1192,7 +1361,11 @@ def analyze_with_deepseek(price_data, symbol, all_symbols_info=None):
             signal_data['leverage'] = 10  # 默认10倍杠杆
             signal_data['action'] = 'HOLD'
 
-        # 添加风险评估字段（如果没有）
+        # 添加智能止损/止盈相关字段（如果没有）
+        if 'partial_close_percentage' not in signal_data:
+            signal_data['partial_close_percentage'] = 50  # 默认50%
+        if 'signal_strength' not in signal_data:
+            signal_data['signal_strength'] = 'MEDIUM'  # 默认中等信号强度
         if 'risk_assessment' not in signal_data:
             signal_data['risk_assessment'] = "基于当前投资组合状况的风险评估"
 
@@ -1258,16 +1431,24 @@ def analyze_with_deepseek_with_retry(price_data, symbol, all_symbols_info=None, 
 
 
 def execute_trade(signal_data, price_data, symbol):
-    """执行交易 - 币安版本（增强版）"""
+    """执行交易 - 币安版本（增强版，支持智能止损/止盈和部分减仓）"""
     config = TRADE_CONFIGS[symbol]
     current_position = get_current_position(symbol)
 
     futures_print(f"{symbol} 交易信号: {signal_data['signal']}")
     futures_print(f"{symbol} 信心程度: {signal_data['confidence']}")
     futures_print(f"{symbol} 理由: {signal_data['reason']}")
-    futures_print(f"{symbol} 止损: ${signal_data['stop_loss']:,.2f}")
-    futures_print(f"{symbol} 止盈: ${signal_data['take_profit']:,.2f}")
+    # 安全显示止损和止盈值，避免显示-1造成混淆
+    stop_loss_display = signal_data['stop_loss'] if signal_data['stop_loss'] and signal_data['stop_loss'] > 0 else "未设置"
+    take_profit_display = signal_data['take_profit'] if signal_data['take_profit'] and signal_data['take_profit'] > 0 else "未设置"
+    futures_print(f"{symbol} 止损: {stop_loss_display}")
+    futures_print(f"{symbol} 止盈: {take_profit_display}")
     futures_print(f"{symbol} 当前持仓: {current_position}")
+    
+    # 添加部分减仓相关信息的打印
+    if signal_data.get('signal') == 'PARTIAL_CLOSE':
+        futures_print(f"{symbol} 减仓比例: {signal_data.get('partial_close_percentage', 50)}%")
+        futures_print(f"{symbol} 信号强度: {signal_data.get('signal_strength', 'MEDIUM')}")
 
     # 风险管理：低信心信号不执行
     if signal_data['confidence'] == 'LOW' and not GLOBAL_CONFIG['test_mode']:
@@ -1310,6 +1491,47 @@ def execute_trade(signal_data, price_data, symbol):
         # 根据动作类型执行不同的交易逻辑
         if action == 'HOLD' or signal_data['signal'] == 'HOLD':
             print(f"{symbol} 建议观望，不执行交易")
+            return
+
+        # 处理部分减仓逻辑
+        if signal_data['signal'] == 'PARTIAL_CLOSE' or action == 'PARTIAL_CLOSE':
+            if not current_position:
+                log_futures_warning(f"{symbol} 无持仓，无法执行部分减仓")
+                return
+                
+            # 获取减仓比例
+            partial_close_percentage = signal_data.get('partial_close_percentage', 50)
+            if partial_close_percentage <= 0 or partial_close_percentage > 100:
+                partial_close_percentage = 50  # 默认50%
+                
+            # 计算减仓数量
+            partial_close_amount = current_position['size'] * (partial_close_percentage / 100)
+            
+            futures_print(f"{symbol} 执行部分减仓: {partial_close_percentage}% ({partial_close_amount:.6f} {config['base_currency']})")
+            
+            # 执行部分减仓
+            if current_position['side'] == 'long':
+                # 减少多仓
+                exchange.create_market_order(
+                    config['symbol'],
+                    'sell',
+                    partial_close_amount,
+                    params={'reduceOnly': True}
+                )
+                futures_print(f"{symbol} 多仓部分减仓成功")
+            else:  # short position
+                # 减少空仓
+                exchange.create_market_order(
+                    config['symbol'],
+                    'buy',
+                    partial_close_amount,
+                    params={'reduceOnly': True}
+                )
+                futures_print(f"{symbol} 空仓部分减仓成功")
+                
+            time.sleep(2)
+            position = get_current_position(symbol)
+            futures_print(f"{symbol} 减仓后持仓: {position}")
             return
 
         # 计算交易数量（以基础货币为单位）
@@ -1409,6 +1631,18 @@ def execute_trade(signal_data, price_data, symbol):
         time.sleep(2)
         position = get_current_position(symbol)
         futures_print(f"{symbol} 更新后持仓: {position}")
+        
+        # 更新持仓记录表中的止损位和止盈位
+        if position and signal_data['signal'] in ['BUY', 'SELL']:
+            # 确保止损和止盈值有效，避免保存-1到数据库
+            stop_loss_to_save = signal_data['stop_loss'] if signal_data['stop_loss'] and signal_data['stop_loss'] > 0 else None
+            take_profit_to_save = signal_data['take_profit'] if signal_data['take_profit'] and signal_data['take_profit'] > 0 else None
+            save_position_record(position, symbol, stop_loss_to_save, take_profit_to_save)
+            
+            # 安全显示保存的止损和止盈值
+            stop_loss_display = stop_loss_to_save if stop_loss_to_save else "未设置"
+            take_profit_display = take_profit_to_save if take_profit_to_save else "未设置"
+            futures_print(f"{symbol} 已更新持仓记录表 - 止损: {stop_loss_display}, 止盈: {take_profit_display}")
 
     except Exception as e:
         log_futures_error(f"{symbol} 订单执行失败: {e}")
@@ -1442,7 +1676,10 @@ def trading_bot_for_symbol(symbol, all_symbols_info=None, balance=None, usdt_bal
     
     # 3. 获取当前持仓并保存到数据库
     current_position = get_current_position(symbol)
-    save_position_record(current_position, symbol)
+    # 从当前持仓中获取止损和止盈位
+    stop_loss = current_position.get('stop_loss') if current_position else None
+    take_profit = current_position.get('take_profit') if current_position else None
+    save_position_record(current_position, symbol, stop_loss, take_profit)
     
     # 4. 使用DeepSeek多币种综合分析（带重试）
     signal_data = analyze_with_deepseek_with_retry(price_data, symbol, all_symbols_info)
@@ -1454,7 +1691,7 @@ def trading_bot_for_symbol(symbol, all_symbols_info=None, balance=None, usdt_bal
     execute_trade(signal_data, price_data, symbol)
     
     # 6. 更新交易统计
-    if signal_data['signal'] in ['BUY', 'SELL']:
+    if signal_data['signal'] in ['BUY', 'SELL', 'PARTIAL_CLOSE']:
         trading_stats['total_trades'] += 1
         # 这里可以添加更复杂的盈亏计算逻辑
         update_trading_stats()
