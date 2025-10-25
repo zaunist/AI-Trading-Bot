@@ -1,4 +1,4 @@
-# 币安交易机器人
+# AI-Trading-Bot
 
 支持现货和合约交易的自动化交易系统，基于技术分析和AI决策。
 
@@ -14,7 +14,7 @@
 
 ## 环境要求
 
-- Python 3.8+
+- Python 3.10+
 - Binance API密钥（现货和合约）
 - DeepSeek API密钥
 
@@ -23,7 +23,7 @@
 1. 克隆项目代码：
    ```bash
    git clone <repository-url>
-   cd trading-bot
+   cd AI-Trading-Bot
    ```
 
 2. 安装依赖：
@@ -73,20 +73,21 @@ python main.py
 python spot_trading.py
 
 # 单独运行合约交易机器人
-python deepseek.py
+python futures_trading.py
 ```
 
 ### Docker运行
 
 ```bash
 # 构建镜像
-docker build -t trading-bot .
+docker build -t ai-trading-bot .
 
 # 运行容器
-docker run -d --name trading-bot \
+docker run -d --name ai-trading-bot \
   --env-file .env \
   -v ./data:/app/data \
-  trading-bot
+  -v ./logs:/app/logs \
+  ai-trading-bot
 ```
 
 或者使用docker-compose：
@@ -105,15 +106,17 @@ docker-compose down
 ## 项目结构
 
 ```
-trading-bot/
-├── deepseek.py          # 合约交易主程序
-├── spot_trading.py      # 现货交易主程序
-├── main.py             # 统一主程序
-├── requirements.txt    # 依赖包列表
-├── .env.example        # 环境变量示例
-├── Dockerfile          # Docker配置
-├── docker-compose.yml  # Docker Compose配置
-└── data/               # 数据库存储目录
+AI-Trading-Bot/
+├── futures_trading.py  # 合约交易主程序
+├── spot_trading.py     # 现货交易主程序
+├── main.py            # 统一主程序
+├── thread_logger.py   # 线程日志记录器
+├── requirements.txt   # 依赖包列表
+├── .env.example       # 环境变量示例
+├── Dockerfile         # Docker配置
+├── docker-compose.yml # Docker Compose配置
+├── data/              # 数据库存储目录
+└── logs/              # 日志文件目录
 ```
 
 ## 交易策略
@@ -146,11 +149,15 @@ trading-bot/
 
 系统使用SQLite数据库存储：
 
-1. **价格数据表** (`price_data`): 存储历史价格和指标
-2. **交易信号表** (`trading_signals`): 存储AI生成的交易信号
-3. **持仓记录表** (`position_records`): 存储持仓变化记录
-4. **交易统计表** (`trading_stats`): 存储交易统计信息
-5. **技术指标表** (`technical_indicators`): 存储技术指标历史
+1. **价格数据表** (`price_data`): 存储历史价格和指标，支持多币种
+2. **交易信号表** (`trading_signals`): 存储AI生成的交易信号，包含信心度和风险评估
+3. **持仓记录表** (`position_records`): 存储持仓变化记录，区分现货和合约
+4. **交易统计表** (`trading_stats`): 存储交易统计信息，包含运行时间和调用次数
+5. **技术指标表** (`technical_indicators`): 存储技术指标历史，支持多时间周期分析
+
+数据库文件位置：
+- 现货交易数据库：`/app/data/spot_trading_bot.db`
+- 合约交易数据库：`/app/data/trading_bot.db`
 
 ## 注意事项
 
@@ -171,10 +178,13 @@ trading-bot/
 
 ```bash
 # 查看现货交易日志
-tail -f spot_trading.log
+tail -f logs/spot_trading.log
 
 # 查看合约交易日志
-tail -f futures_trading.log
+tail -f logs/futures_trading.log
+
+# 查看主程序日志
+tail -f logs/main_program.log
 ```
 
 ## 许可证
