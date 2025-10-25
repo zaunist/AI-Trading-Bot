@@ -66,14 +66,8 @@ TEST_MODE=true
 ### 本地运行
 
 ```bash
-# 运行统一交易机器人（同时运行现货和合约）
+# 运行统一交易机器人
 python main.py
-
-# 单独运行现货交易机器人
-python spot_trading.py
-
-# 单独运行合约交易机器人
-python futures_trading.py
 ```
 
 ### Docker运行

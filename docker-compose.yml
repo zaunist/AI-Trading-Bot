@@ -1,46 +1,37 @@
-version: "3.8"
-
 services:
-  trading-bot:
+  futures-trading-bot:
     image: zaunist/ds:latest
-    container_name: trading-bot
+    container_name: futures-trading-bot
     restart: unless-stopped
     environment:
       - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
       - BINANCE_FUTURES_API_KEY=${BINANCE_FUTURES_API_KEY}
       - BINANCE_FUTURES_SECRET=${BINANCE_FUTURES_SECRET}
-      - BINANCE_SPOT_API_KEY=${BINANCE_SPOT_API_KEY}
-      - BINANCE_SPOT_SECRET=${BINANCE_SPOT_SECRET}
-      - ENABLE_SPOT_TRADING=${ENABLE_SPOT_TRADING}
-      - ENABLE_FUTURES_TRADING=${ENABLE_FUTURES_TRADING}
+      - ENABLE_SPOT_TRADING=false
+      - ENABLE_FUTURES_TRADING=true
       - TEST_MODE=${TEST_MODE}
     volumes:
       - ./logs:/app/logs
       - ./data:/app/data
     networks:
       - trading-network
-    # 如果需要外部访问，可以取消注释以下行
-    # ports:
-    #   - "8000:8000"
-    # 健康检查
-    healthcheck:
-      test:
-        ["CMD", "python", "-c", "import ccxt, openai; print('Dependencies OK')"]
-      interval: 60s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
 
-  # 可选：添加一个监控服务
-  # monitoring:
-  #   image: prom/prometheus:latest
-  #   container_name: trading-monitor
-  #   ports:
-  #     - "9090:9090"
-  #   volumes:
-  #     - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
-  #   networks:
-  #     - trading-network
+  spot-trading-bot:
+    image: zaunist/ds:latest
+    container_name: spot-trading-bot
+    restart: unless-stopped
+    environment:
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
+      - BINANCE_SPOT_API_KEY=${BINANCE_SPOT_API_KEY}
+      - BINANCE_SPOT_SECRET=${BINANCE_SPOT_SECRET}
+      - ENABLE_SPOT_TRADING=true
+      - ENABLE_FUTURES_TRADING=false
+      - TEST_MODE=${TEST_MODE}
+    volumes:
+      - ./logs:/app/logs
+      - ./data:/app/data
+    networks:
+      - trading-network
 
 networks:
   trading-network:

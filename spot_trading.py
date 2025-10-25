@@ -1122,8 +1122,11 @@ def execute_spot_trade(signal_data, price_data, symbol):
     spot_print(f"{symbol} 交易信号: {signal_data['signal']}")
     spot_print(f"{symbol} 信心程度: {signal_data['confidence']}")
     spot_print(f"{symbol} 理由: {signal_data['reason']}")
-    spot_print(f"{symbol} 止损: ${signal_data['stop_loss']:,.2f}")
-    spot_print(f"{symbol} 止盈: ${signal_data['take_profit']:,.2f}")
+  # 安全显示止损和止盈值，避免显示-1造成混淆
+    stop_loss_display = signal_data['stop_loss'] if signal_data['stop_loss'] and signal_data['stop_loss'] > 0 else "未设置"
+    take_profit_display = signal_data['take_profit'] if signal_data['take_profit'] and signal_data['take_profit'] > 0 else "未设置"
+    spot_print(f"{symbol} 止损: {stop_loss_display}")
+    spot_print(f"{symbol} 止盈: {take_profit_display}")
     spot_print(f"{symbol} 当前持仓: {current_position}")
 
     # 风险管理：低信心信号不执行
@@ -1348,7 +1351,3 @@ def spot_main():
         if spot_db_connection:
             spot_db_connection.close()
             spot_print("数据库连接已关闭")
-
-
-if __name__ == "__main__":
-    spot_main()
